@@ -15,6 +15,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/chinahch/luma/internal/httpapi"
+	"github.com/chinahch/luma/internal/secretbox"
 	"github.com/chinahch/luma/internal/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -26,7 +27,18 @@ func main() {
 	}
 }
 func run() error {
-	if len(os.Args)==2&&os.Args[1]=="healthcheck" {client:=http.Client{Timeout:2*time.Second};response,err:=client.Get("http://127.0.0.1:8080/healthz");if err!=nil{return errors.New("healthcheck failed")};defer response.Body.Close();if response.StatusCode!=200{return errors.New("healthcheck not ready")};return nil}
+	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
+		client := http.Client{Timeout: 2 * time.Second}
+		response, err := client.Get("http://127.0.0.1:8080/healthz")
+		if err != nil {
+			return errors.New("healthcheck failed")
+		}
+		defer response.Body.Close()
+		if response.StatusCode != 200 {
+			return errors.New("healthcheck not ready")
+		}
+		return nil
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	dsn := os.Getenv("DATABASE_URL")
@@ -90,10 +102,19 @@ func run() error {
 		return errors.New("HTTP preview requires COOKIE_SECURE=false; production should use HTTPS")
 	}
 	addr := os.Getenv("LISTEN_ADDR")
+	masterKey := os.Getenv("LUMA_MASTER_KEY")
+	if masterKey != "" {
+		if _, err = secretbox.New(masterKey); err != nil {
+			return err
+		}
+	}
+	if err = httpapi.ProtectNodeSecrets(startup, s, masterKey); err != nil {
+		return fmt.Errorf("node secret migration failed: %w", err)
+	}
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
-	server := &http.Server{Addr: addr, Handler: httpapi.New(s, cache, httpapi.Config{SecureCookies: secure, AllowedOrigin: origin, Timezone: zone}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+	server := &http.Server{Addr: addr, Handler: httpapi.New(s, cache, httpapi.Config{SecureCookies: secure, AllowedOrigin: origin, Timezone: zone, MasterKey: masterKey}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	done := make(chan error, 1)
 	go func() { slog.Info("Luma preview listening", "address", addr); done <- server.ListenAndServe() }()
 	select {

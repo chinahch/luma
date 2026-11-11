@@ -16,6 +16,12 @@ import (
 //go:embed schema.sql
 var schema string
 
+//go:embed migration2.sql
+var migration2 string
+
+//go:embed migration3.sql
+var migration3 string
+
 var ErrConflict = errors.New("report identity conflicts with existing payload")
 var ErrForbidden = errors.New("node is not active or authorized")
 var ErrInvalid = errors.New("invalid accounting entry")
@@ -54,16 +60,26 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err = tx.QueryRow(ctx, `SELECT to_regclass('schema_version') IS NOT NULL`).Scan(&exists); err != nil {
 		return err
 	}
+	version := 1
 	if exists {
-		var version int
 		if err = tx.QueryRow(ctx, `SELECT version FROM schema_version WHERE id=1`).Scan(&version); err != nil {
 			return err
 		}
-		if version != 1 {
+		if version < 1 || version > 3 {
 			return fmt.Errorf("unsupported database version %d", version)
 		}
 	} else {
 		if _, err = tx.Exec(ctx, schema); err != nil {
+			return err
+		}
+	}
+	if version == 1 {
+		if _, err = tx.Exec(ctx, migration2); err != nil {
+			return err
+		}
+	}
+	if version <= 2 {
+		if _, err = tx.Exec(ctx, migration3); err != nil {
 			return err
 		}
 	}
