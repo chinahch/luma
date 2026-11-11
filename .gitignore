@@ -1,0 +1,10 @@
+.env
+*.env
+!.env.example
+node_modules/
+web/dist/
+dist/
+*.exe
+coverage.out
+.superpowers/
+.work/

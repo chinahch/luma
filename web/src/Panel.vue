@@ -1,0 +1,37 @@
+<script setup lang="ts">
+import { computed,defineAsyncComponent,onMounted,onUnmounted,ref } from 'vue'
+import { NAlert,NButton,NIcon,NInput,NSpin,NTag,useMessage } from 'naive-ui'
+import { Dashboard,ChartBar,Users,Server,LayersLinked as Layers,Box,Link,Sun,Moon,Logout,ArrowRight,Menu2,Refresh } from '@vicons/tabler'
+import { api,ApiError } from './api'
+import { createAccountState } from './account'
+const Overview=defineAsyncComponent(()=>import('./components/Overview.vue'))
+const Usage=defineAsyncComponent(()=>import('./components/Usage.vue'))
+const Resources=defineAsyncComponent(()=>import('./components/Resources.vue'))
+const Subscription=defineAsyncComponent(()=>import('./components/Subscription.vue'))
+defineProps<{dark:boolean}>();defineEmits(['theme'])
+const account=createAccountState<any>();const me=account.user,zone=account.timezone
+const loading=ref(true),error=ref(''),page=ref('overview'),email=ref(''),password=ref(''),signing=ref(false),mobile=ref(false),accountError=ref('');let accountTimer:ReturnType<typeof setInterval>|undefined
+const message=useMessage()
+const all=[{key:'overview',label:'运行概览',icon:Dashboard},{key:'usage',label:'流量统计',icon:ChartBar},{key:'users',label:'用户管理',icon:Users,admin:true},{key:'plans',label:'套餐管理',icon:Layers,admin:true},{key:'nodes',label:'节点管理',icon:Server,admin:true},{key:'machines',label:'机器管理',icon:Box,admin:true},{key:'subscription',label:'我的订阅',icon:Link}]
+const items=computed(()=>all.filter(x=>!x.admin||me.value?.role==='admin'))
+const title=computed(()=>all.find(x=>x.key===page.value)?.label||'Luma')
+async function load(){loading.value=true;error.value='';try{await account.refresh(()=>api('/api/me'))}catch(e){if(e instanceof ApiError&&e.status===401)me.value=null;else error.value=(e as Error).message}finally{loading.value=false}}
+async function login(){signing.value=true;error.value='';try{await api('/api/login',{method:'POST',body:JSON.stringify({email:email.value,password:password.value})});password.value='';await load()}catch(e){error.value=(e as Error).message}finally{signing.value=false}}
+async function logout(){try{await api('/api/logout',{method:'POST'});me.value=null;page.value='overview'}catch(e){message.error((e as Error).message)}}
+async function refreshAccount(){if(!me.value)return;try{await account.refresh(()=>api('/api/me'));accountError.value=''}catch(e){if(e instanceof ApiError&&e.status===401)me.value=null;else accountError.value='账户信息刷新失败，余额可能滞后：'+(e as Error).message}}
+function select(key:string){page.value=key;mobile.value=false;refreshAccount()}
+onMounted(()=>{load();accountTimer=setInterval(refreshAccount,30000)});onUnmounted(()=>clearInterval(accountTimer))
+</script>
+<template>
+ <div v-if="loading" class="screen-center"><n-spin size="large"/><span>正在连接 Luma</span></div>
+ <div v-else-if="!me" class="login-page">
+  <section class="login-story"><a class="brand brand-light" href="#"><span class="brand-mark">l</span>Luma<span class="brand-dot">.</span></a><div class="login-copy"><span class="eyebrow">A CLEARER VIEW</span><h1>让节点运行，<br>让用量清晰。</h1><p>在一个安静的工作空间里，管理节点、查看流量，掌握服务状态。</p><div class="login-diagram"><span class="diagram-core">L</span><i class="diagram-line one"></i><i class="diagram-line two"></i><i class="diagram-line three"></i><span class="diagram-node one"><n-icon :component="Server"/> 节点</span><span class="diagram-node two"><n-icon :component="ChartBar"/> 用量</span><span class="diagram-node three"><n-icon :component="Users"/> 用户</span></div></div><div class="story-footer">OPEN SOURCE · SELF HOSTED</div></section>
+  <section class="login-form"><n-button class="theme-toggle" quaternary circle @click="$emit('theme')"><n-icon :component="dark?Sun:Moon"/></n-button><div class="login-box"><n-tag size="small" :bordered="false">PREVIEW 0.1</n-tag><h2>欢迎回来</h2><p class="muted">登录你的 Luma 工作空间</p><n-alert v-if="error" type="error" class="space-bottom">{{error}}</n-alert><form @submit.prevent="login"><label>邮箱地址</label><n-input v-model:value="email" type="text" placeholder="you@example.com" size="large" :input-props="{type:'email',autocomplete:'username',required:true}"/><label>密码</label><n-input v-model:value="password" type="password" show-password-on="click" placeholder="输入密码" size="large" :input-props="{autocomplete:'current-password',required:true}"/><n-button type="primary" size="large" block attr-type="submit" :loading="signing">登录工作空间 <template #icon><n-icon :component="ArrowRight"/></template></n-button></form><p class="login-hint">首次使用？请由部署管理员创建账号。</p><n-button v-if="error" text @click="load">重新连接</n-button></div><p class="login-bottom">Luma · 你的节点，你的数据。</p></section>
+ </div>
+ <div v-else class="app-shell">
+  <div v-if="mobile" class="mobile-overlay" @click="mobile=false"></div>
+  <aside class="sidebar" :class="{open:mobile}"><a class="brand" href="#" @click.prevent="select('overview')"><span class="brand-mark">l</span>Luma<span class="brand-dot">.</span></a><div class="workspace-chip"><span class="workspace-avatar">L</span><div><strong>我的工作空间</strong><small>{{me.role==='admin'?'管理员控制台':'用户中心'}}</small></div><span class="status-dot"></span></div><span class="nav-label">工作空间</span><nav><button v-for="item in items" :key="item.key" :class="{active:page===item.key}" @click="select(item.key)"><n-icon :component="item.icon" size="20"/><span>{{item.label}}</span><span v-if="page===item.key" class="nav-current"></span></button></nav><div class="sidebar-bottom"><div class="preview-note"><span class="status-dot"></span><strong>开源 · 自行部署</strong><p>数据库是持久记录的来源。请定期备份。</p></div><a href="https://github.com/chinahch/luma" target="_blank" rel="noreferrer">Luma on GitHub ↗</a></div></aside>
+  <div class="main-wrap"><header class="topbar"><div class="breadcrumb"><n-button class="mobile-menu" title="打开导航" quaternary @click="mobile=true"><n-icon :component="Menu2"/></n-button><span>工作空间</span><span>/</span><strong>{{title}}</strong></div><div class="top-actions"><n-tag size="small" :bordered="false" round>预览版</n-tag><n-button quaternary circle :title="dark?'浅色模式':'深色模式'" @click="$emit('theme')"><n-icon :component="dark?Sun:Moon"/></n-button><span class="account-avatar">{{me.email[0].toUpperCase()}}</span><div class="account-info"><strong>{{me.email}}</strong><small>{{me.role==='admin'?'管理员':'用户'}}</small></div><n-button quaternary circle title="退出登录" @click="logout"><n-icon :component="Logout"/></n-button></div></header>
+  <main class="main-content"><n-alert v-if="accountError" type="warning" class="space-bottom">{{accountError}}</n-alert><Overview v-if="page==='overview'" :me="me" :zone="zone" @usage="select('usage')" @refresh-account="refreshAccount"/><Usage v-else-if="page==='usage'" :me="me" :zone="zone"/><Resources v-else-if="['users','plans','nodes','machines'].includes(page)" :key="page" :kind="page"/><Subscription v-else :me="me"/></main><footer class="main-footer"><span>Luma · 0.1.0-preview</span><span>统计按采集窗口归档，旧协议可能存在数据缺口</span></footer></div>
+ </div>
+</template>

@@ -1,0 +1,84 @@
+name: Test Luma
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_DB: luma_test
+          POSTGRES_USER: luma
+          POSTGRES_PASSWORD: ci_test_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U luma -d luma_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+    env:
+      TEST_DATABASE_URL: postgres://luma:ci_test_only@127.0.0.1:5432/luma_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.10'
+      - run: go test -race -count=1 ./...
+      - run: go vet ./...
+      - run: CGO_ENABLED=0 go build ./cmd/luma
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+      - run: corepack enable && corepack prepare pnpm@11.25.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+  compose:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: luma-ci
+      POSTGRES_PASSWORD: ci_disposable_only_3422
+      COOKIE_SECURE: 'false'
+      PUBLIC_URL: http://localhost:8088
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and start isolated Compose stack
+        run: |
+          docker compose config --quiet
+          docker compose up -d --build --wait
+          curl --fail http://localhost:8088/healthz
+          curl --fail --head http://localhost:8088/ | grep -i 'Content-Security-Policy:'
+      - name: Initialize account and exercise HTTP login
+        env:
+          LUMA_ADMIN_EMAIL: ci@example.test
+          LUMA_ADMIN_PASSWORD: ci-preview-password-only
+        run: |
+          docker compose run --rm -e LUMA_ADMIN_EMAIL -e LUMA_ADMIN_PASSWORD api admin create
+          curl --fail -c /tmp/luma-cookie -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.test","password":"ci-preview-password-only"}' http://localhost:8088/api/login
+          curl --fail -b /tmp/luma-cookie http://localhost:8088/api/admin/users
+          sh scripts/backup.sh /tmp/luma-ci.dump
+      - name: Test recovery into a new empty instance
+        run: |
+          docker compose stop web api
+          export COMPOSE_PROJECT_NAME=luma-restore-ci
+          docker compose up -d db redis --wait
+          sh scripts/restore.sh /tmp/luma-ci.dump
+          docker compose up -d --wait
+          curl --fail -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.test","password":"ci-preview-password-only"}' http://localhost:8088/api/login
+      - name: Clean disposable CI stacks
+        if: always()
+        run: |
+          docker compose -p luma-ci down --volumes
+          docker compose -p luma-restore-ci down --volumes

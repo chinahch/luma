@@ -1,0 +1,97 @@
+openapi: 3.1.0
+info:
+  title: Luma preview API
+  version: 0.1.0-preview
+  description: Core contract. Legacy traffic is explicitly not retry-idempotent; see api-and-accounting.md.
+servers:
+  - url: /
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: luma_session
+    nodeToken:
+      type: http
+      scheme: bearer
+  schemas:
+    Entry:
+      type: object
+      required: [user_id, up_bytes, down_bytes]
+      properties:
+        user_id: {type: integer, minimum: 1}
+        up_bytes: {type: integer, minimum: 0, maximum: 1125899906842624}
+        down_bytes: {type: integer, minimum: 0, maximum: 1125899906842624}
+paths:
+  /api/login:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: {type: string, format: email}
+                password: {type: string, format: password}
+      responses:
+        '200': {description: HttpOnly session cookie created}
+        '401': {description: Invalid credentials}
+        '429': {description: Login rate limit}
+  /api/me:
+    get:
+      security: [{session: []}]
+      responses:
+        '200': {description: Current user and statistics timezone}
+        '401': {description: Login required}
+  /api/usage:
+    get:
+      security: [{session: []}]
+      parameters:
+        - {name: from, in: query, schema: {type: string, format: date}}
+        - {name: to, in: query, schema: {type: string, format: date}}
+        - {name: timezone, in: query, schema: {type: string, default: UTC}}
+        - {name: grain, in: query, schema: {type: string, enum: [hour, day, month]}}
+        - {name: user_id, in: query, schema: {type: integer}}
+        - {name: node_id, in: query, schema: {type: integer}}
+      responses:
+        '200': {description: Aggregated raw/billed byte strings, quality, timezone and truncation flag}
+        '403': {description: Another user is inaccessible}
+  /api/v2/server/handshake:
+    post:
+      security: [{nodeToken: []}]
+      responses:
+        '200': {description: websocket disabled and polling intervals; identity fields are in JSON body}
+  /api/v2/server/machine/nodes:
+    post:
+      security: [{nodeToken: []}]
+      responses:
+        '200': {description: Machine-owned active nodes and base_config}
+        '403': {description: Machine identity required}
+  /api/v3/server/report:
+    post:
+      security: [{nodeToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [node_id, report_id, period_start, period_end, entries]
+              properties:
+                node_id: {type: integer, minimum: 1}
+                machine_id: {type: integer, minimum: 1}
+                report_id: {type: string, pattern: '^[A-Za-z0-9_.:-]{1,128}$'}
+                period_start: {type: string, format: date-time}
+                period_end: {type: string, format: date-time}
+                entries:
+                  type: array
+                  maxItems: 10000
+                  items: {$ref: '#/components/schemas/Entry'}
+      responses:
+        '200': {description: Recorded once or duplicate=true}
+        '400': {description: Invalid report; transaction not committed}
+        '401': {description: Invalid token}
+        '403': {description: Wrong node/Machine scope}
+        '409': {description: Same node/report ID with different contents}

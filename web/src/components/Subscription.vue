@@ -1,0 +1,10 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { NAlert,NButton,NIcon,NInput,NPopconfirm,useMessage } from 'naive-ui'
+import { Copy,Link,Refresh } from '@vicons/tabler'
+import { api,bytes,stamp } from '../api'
+defineProps<{me:any}>();const link=ref(''),busy=ref(false),message=useMessage()
+async function rotate(){busy.value=true;try{const result=await api('/api/me/subscription-token',{method:'POST'});link.value=location.origin+result.path;message.success('新的订阅链接已生成，旧链接已失效')}catch(e){message.error((e as Error).message)}finally{busy.value=false}}
+async function copy(){try{await navigator.clipboard.writeText(link.value);message.success('已复制')}catch{message.warning('请手动复制链接')}}
+</script>
+<template><div class="page-heading"><div><span class="eyebrow">SUBSCRIPTION</span><h1>我的订阅</h1><p>获取属于你的客户端订阅链接。</p></div></div><section class="stat-grid three"><article class="stat-card"><span class="stat-label">已用额度</span><strong>{{bytes(me.used_bytes)}}</strong><small>已应用节点计费倍率</small></article><article class="stat-card"><span class="stat-label">剩余额度</span><strong>{{bytes(Math.max(me.quota_bytes-me.used_bytes,0))}}</strong><small>总额度 {{bytes(me.quota_bytes)}}</small></article><article class="stat-card"><span class="stat-label">有效期至</span><strong class="date-stat">{{stamp(me.expires_at)}}</strong><small>到期或额度用尽后不再下发用户</small></article></section><article class="surface subscription-card"><span class="subscription-icon"><n-icon :component="Link" size="30"/></span><h2>客户端订阅链接</h2><p class="muted">当前预览版提供 VLESS 的 TCP、WS、XHTTP 与 gRPC 链接。Reality 和其他协议订阅格式尚未实现。</p><n-alert type="info" class="space-bottom">订阅链接等同于访问凭据，请勿转发。只有启用、未到期且有剩余额度的账户可获取节点配置。</n-alert><div v-if="link" class="subscription-link"><n-input :value="link" readonly/><n-button secondary @click="copy"><n-icon :component="Copy"/></n-button></div><n-popconfirm @positive-click="rotate"><template #trigger><n-button type="primary" :loading="busy"><template #icon><n-icon :component="Refresh"/></template>{{link?'重新生成订阅链接':'生成新的订阅链接'}}</n-button></template>生成后，之前所有订阅链接将立即失效，是否继续？</n-popconfirm><p class="small muted">链接只在生成后显示，本页面不会保存令牌副本。</p></article></template>
