@@ -113,3 +113,5 @@ Windows 受限环境可用构建后的 `pnpm exec vite preview --host 127.0.0.1 
 - `deploy` / `scripts`：同源代理、备份与空库恢复。
 
 Luma 原创代码采用 [MIT](LICENSE)，依赖遵循各自许可。安全问题见 [SECURITY.md](SECURITY.md)。
+
+账户与节点升级：管理员可使用节点、稳定订阅、邀请注册、多套餐权限、月度流量重置、节点列表启停/删除、原生落地连通及 Ping、故障诊断和排除 WARP 的物理公网 IP 自动填入，见 [使用与升级说明](docs/account-plans-health.md)。

@@ -66,13 +66,13 @@ func (a *API) validateConnectorOwner(c *gin.Context, raw []byte) bool {
 		return true
 	}
 	var exists bool
-	e = a.s.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND role='user')`, v.UserID).Scan(&exists)
+	e = a.s.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL)`, v.UserID).Scan(&exists)
 	if e != nil {
 		internal(c, e)
 		return false
 	}
 	if !exists {
-		fail(c, 400, "MTProxy owner must be an existing ordinary user")
+		fail(c, 400, "MTProxy owner must be an existing account")
 		return false
 	}
 	return true
@@ -139,7 +139,7 @@ func (a *API) connectors(c *gin.Context) {
 		d := desiredConnector{NodeID: n.id, Kind: con.Kind, UserID: con.UserID, Port: port, MetricsPort: con.MetricsPort, Credential: con.Token}
 		if con.Kind == "mtg" {
 			var allowed bool
-			e = a.s.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND active AND role='user' AND used_bytes<quota_bytes AND (expires_at IS NULL OR expires_at>now()))`, con.UserID).Scan(&allowed)
+			allowed, e = a.nodeAllowed(c.Request.Context(), con.UserID, n.id)
 			if e != nil {
 				internal(c, e)
 				return
@@ -237,7 +237,7 @@ func (a *API) connectorReport(c *gin.Context) {
 	a.ingest(c, id, report, "reliable")
 }
 func (a *API) telegramLinks(c *gin.Context) {
-	rows, e := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id JOIN users u ON u.id=$1 WHERE n.active AND n.public_host<>'' AND n.config->'connector'->>'kind'='mtg' AND n.config->'connector'->>'user_id'=$2 AND u.used_bytes<u.quota_bytes AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY n.id`, current(c).ID, fmt.Sprint(current(c).ID))
+	rows, e := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id JOIN users u ON u.id=$1 WHERE n.active AND n.public_host<>'' AND n.config->'connector'->>'kind'='mtg' AND n.config->'connector'->>'user_id'=$2 AND u.deleted_at IS NULL AND u.active AND u.used_bytes<u.quota_bytes AND (u.expires_at IS NULL OR u.expires_at>now()) AND (NOT EXISTS(SELECT 1 FROM node_plans np WHERE np.node_id=n.id) OR EXISTS(SELECT 1 FROM node_plans np WHERE np.node_id=n.id AND np.plan_id=u.plan_id)) ORDER BY n.id`, current(c).ID, fmt.Sprint(current(c).ID))
 	if e != nil {
 		internal(c, e)
 		return

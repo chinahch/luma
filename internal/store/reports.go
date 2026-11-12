@@ -74,7 +74,13 @@ func (s *Store) Ingest(ctx context.Context, nodeID int64, report traffic.Report,
 		}
 		totalUp += entry.Up
 		totalDown += entry.Down
-		tag, err := tx.Exec(ctx, `UPDATE users SET used_bytes=used_bytes+$1 WHERE id=$2 AND used_bytes<=$3`, billed, entry.UserID, math.MaxInt64-billed)
+		if err = s.refreshUserCycle(ctx, tx, entry.UserID, time.Now().UTC()); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return false, ErrInvalid
+			}
+			return false, err
+		}
+		tag, err := tx.Exec(ctx, `UPDATE users SET used_bytes=used_bytes+CASE WHEN $4>=cycle_started_at THEN $1 ELSE 0 END WHERE id=$2 AND (used_bytes<=$3 OR $4<cycle_started_at)`, billed, entry.UserID, math.MaxInt64-billed, report.PeriodEnd)
 		if err != nil {
 			return false, err
 		}

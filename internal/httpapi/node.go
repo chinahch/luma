@@ -20,6 +20,10 @@ type nodeIdentity struct {
 
 func (a *API) nodeAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if err := a.s.RefreshCycles(c.Request.Context(), time.Now()); err != nil {
+			internal(c, err)
+			return
+		}
 		var token string
 		var ident nodeIdentity
 		if c.Request.Method == "GET" {
@@ -176,10 +180,11 @@ func (a *API) nodeConfig(c *gin.Context) {
 	c.JSON(200, cfg)
 }
 func (a *API) nodeUsers(c *gin.Context) {
-	if _, ok := nodeID(c); !ok {
+	id, ok := nodeID(c)
+	if !ok {
 		return
 	}
-	a.jsonQuery(c, `SELECT jsonb_build_object('users',COALESCE(jsonb_agg(to_jsonb(t)),'[]')) FROM (SELECT id,uuid,0 AS speed_limit,0 AS device_limit FROM users WHERE active AND role='user' AND used_bytes<quota_bytes AND (expires_at IS NULL OR expires_at>now()) ORDER BY id)t`)
+	a.jsonQuery(c, `SELECT jsonb_build_object('users',COALESCE(jsonb_agg(to_jsonb(t)),'[]')) FROM (SELECT u.id,u.uuid,0 AS speed_limit,0 AS device_limit FROM users u CROSS JOIN nodes n WHERE n.id=$1 AND `+entitlementSQL+` ORDER BY u.id)t`, id)
 }
 func (a *API) machineNodes(c *gin.Context) {
 	ident := c.MustGet("node_identity").(nodeIdentity)
@@ -197,6 +202,14 @@ func (a *API) machineStatus(c *gin.Context) {
 	}
 	body := c.MustGet("node_body").(map[string]json.RawMessage)
 	status := map[string]json.RawMessage{}
+	if raw, ok := body["public_addresses"]; ok {
+		addresses, err := physicalAddresses(raw)
+		if err != nil {
+			fail(c, 400, "invalid physical public address report")
+			return
+		}
+		status["public_addresses"] = addresses
+	}
 	for _, key := range []string{"cpu", "mem", "swap", "disk", "net"} {
 		if val, ok := body[key]; ok {
 			status[key] = val

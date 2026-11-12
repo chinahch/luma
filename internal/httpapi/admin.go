@@ -48,7 +48,7 @@ func (a *API) jsonQuery(c *gin.Context, query string, args ...any) {
 	c.Data(200, "application/json; charset=utf-8", data)
 }
 func (a *API) users(c *gin.Context) {
-	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT id,email,role,active,plan_id,quota_bytes,used_bytes,expires_at,created_at FROM users ORDER BY id DESC LIMIT 2000)t`)
+	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT id,email,role,active,plan_id,quota_bytes,used_bytes,expires_at,created_at,billing_anchor_at AS opened_at,next_reset_at,inviter_id FROM users WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 2000)t`)
 }
 func (a *API) plans(c *gin.Context) {
 	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT * FROM plans ORDER BY id)t`)
@@ -58,7 +58,7 @@ func (a *API) machines(c *gin.Context) {
 }
 func (a *API) nodes(c *gin.Context) {
 	var raw []byte
-	if e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT id,name,machine_id,active,multiplier_milli,report_interval,config,public_host,last_report_at,last_period_end,last_quality,last_up_bytes,last_down_bytes,last_window_seconds,status,created_at FROM nodes ORDER BY id DESC)t`).Scan(&raw); e != nil {
+	if e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT id,name,machine_id,active,multiplier_milli,report_interval,config,public_host,last_report_at,last_period_end,last_quality,last_up_bytes,last_down_bytes,last_window_seconds,status,created_at,COALESCE((SELECT jsonb_agg(plan_id ORDER BY plan_id) FROM node_plans WHERE node_id=nodes.id),'[]'::jsonb) AS plan_ids FROM nodes WHERE deleted_at IS NULL ORDER BY id DESC)t`).Scan(&raw); e != nil {
 		internal(c, e)
 		return
 	}
@@ -109,9 +109,25 @@ func (a *API) createUser(c *gin.Context) {
 		return
 	}
 	var id int64
-	err = a.s.Pool.QueryRow(ctx, `INSERT INTO users(email,password_hash,role,uuid,plan_id,quota_bytes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`, email, string(hash), in.Role, store.NewID(), in.PlanID, in.Quota, in.ExpiresAt).Scan(&id)
+	tx, err := a.s.Pool.Begin(ctx)
+	if err != nil {
+		internal(c, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `INSERT INTO users(email,password_hash,role,uuid,quota_bytes,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`, email, string(hash), in.Role, store.NewID(), in.Quota, in.ExpiresAt).Scan(&id)
 	if err != nil {
 		dbFailure(c, err)
+		return
+	}
+	if in.PlanID != nil {
+		if _, err = a.s.AllocateOrderTx(ctx, tx, id, current(c).ID, *in.PlanID, "create-user-"+strconv.FormatInt(id, 10)); err != nil {
+			dbFailure(c, err)
+			return
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		internal(c, err)
 		return
 	}
 	c.JSON(201, gin.H{"id": id})
@@ -141,7 +157,7 @@ func (a *API) updateUser(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `UPDATE users SET active=COALESCE($2,active),quota_bytes=COALESCE($3,quota_bytes),expires_at=CASE WHEN $4 THEN $5::timestamptz ELSE expires_at END WHERE id=$1`, id, in.Active, in.Quota, in.ExpiresAt.Set, in.ExpiresAt.Value)
+	tag, err := tx.Exec(ctx, `UPDATE users SET active=COALESCE($2,active),quota_bytes=COALESCE($3,quota_bytes),expires_at=CASE WHEN $4 THEN $5::timestamptz ELSE expires_at END WHERE id=$1 AND deleted_at IS NULL`, id, in.Active, in.Quota, in.ExpiresAt.Set, in.ExpiresAt.Value)
 	if err != nil {
 		dbFailure(c, err)
 		return
@@ -256,6 +272,7 @@ type nodeInput struct {
 	Config      json.RawMessage `json:"config"`
 	PublicHost  string          `json:"public_host"`
 	ExitRouting *proxy.Routes   `json:"exit_routing,omitempty"`
+	PlanIDs     *[]int64        `json:"plan_ids"`
 }
 
 var hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$`)
@@ -321,6 +338,9 @@ func (a *API) createNode(c *gin.Context) {
 	if !a.saveNodeRouting(c, tx, id, in.ExitRouting, in.Config) {
 		return
 	}
+	if !a.saveNodePlans(c, tx, id, in.PlanIDs) {
+		return
+	}
 	if err = tx.Commit(c.Request.Context()); err != nil {
 		internal(c, err)
 		return
@@ -336,9 +356,13 @@ func (a *API) updateNode(c *gin.Context) {
 	if !decode(c, &in) {
 		return
 	}
+	activeOmitted := in.Active == nil
 	if !validateNode(&in) {
 		fail(c, 400, "invalid node configuration")
 		return
+	}
+	if activeOmitted {
+		in.Active = nil
 	}
 	if !a.validateConnectorOwner(c, in.Config) {
 		return
@@ -354,7 +378,7 @@ func (a *API) updateNode(c *gin.Context) {
 	}
 	defer tx.Rollback(c.Request.Context())
 	var oldConfig []byte
-	if err = tx.QueryRow(c.Request.Context(), `SELECT config FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&oldConfig); err != nil {
+	if err = tx.QueryRow(c.Request.Context(), `SELECT config FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&oldConfig); err != nil {
 		fail(c, 404, "node not found")
 		return
 	}
@@ -367,7 +391,7 @@ func (a *API) updateNode(c *gin.Context) {
 		fail(c, 409, "MTG owner is permanent for this node; create a new node for another user")
 		return
 	}
-	tag, err := tx.Exec(c.Request.Context(), `UPDATE nodes SET name=$2,machine_id=$3,active=$4,multiplier_milli=$5,report_interval=$6,config=$7,public_host=$8 WHERE id=$1`, id, in.Name, in.MachineID, in.Active, in.Multiplier, in.Interval, public, in.PublicHost)
+	tag, err := tx.Exec(c.Request.Context(), `UPDATE nodes SET name=$2,machine_id=$3,active=COALESCE($4,active),multiplier_milli=$5,report_interval=$6,config=$7,public_host=$8 WHERE id=$1`, id, in.Name, in.MachineID, in.Active, in.Multiplier, in.Interval, public, in.PublicHost)
 	if err != nil {
 		dbFailure(c, err)
 		return
@@ -381,6 +405,9 @@ func (a *API) updateNode(c *gin.Context) {
 		return
 	}
 	if !a.saveNodeRouting(c, tx, id, in.ExitRouting, in.Config) {
+		return
+	}
+	if !a.saveNodePlans(c, tx, id, in.PlanIDs) {
 		return
 	}
 	if err = tx.Commit(c.Request.Context()); err != nil {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/chinahch/luma/internal/store"
 	"github.com/gin-gonic/gin"
@@ -22,13 +23,17 @@ func normalizeEmail(raw string) (string, bool) {
 }
 func (a *API) auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if err := a.s.RefreshCycles(c.Request.Context(), time.Now()); err != nil {
+			internal(c, err)
+			return
+		}
 		token, err := c.Cookie("luma_session")
 		if err != nil || len(token) != 43 {
 			fail(c, 401, "login required")
 			return
 		}
 		var u User
-		err = a.s.Pool.QueryRow(c.Request.Context(), `SELECT u.id,u.email,u.role,u.active,u.quota_bytes,u.used_bytes,u.expires_at,u.plan_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active`, store.Hash(token)).Scan(&u.ID, &u.Email, &u.Role, &u.Active, &u.Quota, &u.Used, &u.ExpiresAt, &u.PlanID)
+		err = a.s.Pool.QueryRow(c.Request.Context(), `SELECT u.id,u.email,u.role,u.active,u.quota_bytes,u.used_bytes,u.expires_at,u.plan_id,u.next_reset_at,u.billing_anchor_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active AND u.deleted_at IS NULL`, store.Hash(token)).Scan(&u.ID, &u.Email, &u.Role, &u.Active, &u.Quota, &u.Used, &u.ExpiresAt, &u.PlanID, &u.NextResetAt, &u.OpenedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(c, 401, "session expired")
 			return
@@ -64,7 +69,7 @@ func (a *API) login(c *gin.Context) {
 	var id int64
 	var hash string
 	var active bool
-	err = a.s.Pool.QueryRow(c.Request.Context(), `SELECT id,password_hash,active FROM users WHERE email=$1`, email).Scan(&id, &hash, &active)
+	err = a.s.Pool.QueryRow(c.Request.Context(), `SELECT id,password_hash,active FROM users WHERE email=$1 AND deleted_at IS NULL`, email).Scan(&id, &hash, &active)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		internal(c, err)
 		return
