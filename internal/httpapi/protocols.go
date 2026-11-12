@@ -13,11 +13,75 @@ import (
 )
 
 func (a *API) protocolPreset(c *gin.Context) {
-	var in protocol.Input
+	var in struct {
+		protocol.Input
+		MachineID int64 `json:"machine_id"`
+		AutoPort  bool  `json:"auto_port"`
+	}
 	if !decode(c, &in) {
 		return
 	}
-	cfg, e := protocol.Build(in)
+	if in.AutoPort {
+		if in.MachineID <= 0 {
+			fail(c, 400, "请先选择归属服务器，再自动分配端口")
+			return
+		}
+		var exists bool
+		if err := a.s.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM machines WHERE id=$1)`, in.MachineID).Scan(&exists); err != nil {
+			internal(c, err)
+			return
+		}
+		if !exists {
+			fail(c, 404, "machine not found")
+			return
+		}
+		ports, err := a.s.Pool.Query(c.Request.Context(), `SELECT config FROM nodes WHERE machine_id=$1 AND deleted_at IS NULL`, in.MachineID)
+		if err != nil {
+			internal(c, err)
+			return
+		}
+		used := map[int]bool{}
+		for ports.Next() {
+			var raw []byte
+			if err = ports.Scan(&raw); err != nil {
+				break
+			}
+			var p struct {
+				Port      int `json:"server_port"`
+				Connector struct {
+					Port int `json:"metrics_port"`
+				} `json:"connector"`
+			}
+			if json.Unmarshal(raw, &p) == nil {
+				used[p.Port] = true
+				used[p.Connector.Port] = true
+			}
+		}
+		if err == nil {
+			err = ports.Err()
+		}
+		ports.Close()
+		if err != nil {
+			internal(c, err)
+			return
+		}
+		in.Port = 25000
+		for used[in.Port] && in.Port <= 60000 {
+			in.Port++
+		}
+		if in.Port > 60000 {
+			fail(c, 409, "没有可自动分配的监听端口")
+			return
+		}
+		used[in.Port] = true
+		if in.Preset == "cf-tunnel" || in.Preset == "mtg" {
+			in.MetricsPort = 21001
+			for used[in.MetricsPort] {
+				in.MetricsPort++
+			}
+		}
+	}
+	cfg, e := protocol.Build(in.Input)
 	if e != nil {
 		fail(c, 400, e.Error())
 		return
@@ -142,6 +206,7 @@ func (a *API) nodeDetail(c *gin.Context) {
 			return
 		}
 		config["plan_ids"] = planIDs
+		maskCertificateConfig(config)
 		c.JSON(200, config)
 	}
 }

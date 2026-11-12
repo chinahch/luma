@@ -1,5 +1,5 @@
 // Immutable installer revision, updated with the matching native release.
-export const installerRevision='bd0a796db6a43129dfdbce9adfe3336f77e47569'
+export const installerRevision='c95543123eeb8e689ba5a439a591ffc4809bc2b2'
 export function shellQuote(value:string){return "'"+value.replaceAll("'", "'\"'\"'")+"'"}
 export function machineCommand(origin:string,id:number,code:string):string{
  const u=new URL(origin.trim())

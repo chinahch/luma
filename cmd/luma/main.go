@@ -114,7 +114,7 @@ func run() error {
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
-	handler := httpapi.New(s, cache, httpapi.Config{SecureCookies: secure, AllowedOrigin: origin, Timezone: zone, MasterKey: masterKey})
+	handler := httpapi.New(s, cache, httpapi.Config{SecureCookies: secure, AllowedOrigin: origin, Timezone: zone, MasterKey: masterKey, AutomaticHealth: true})
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
