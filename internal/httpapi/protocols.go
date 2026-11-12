@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,39 +25,31 @@ func (a *API) protocolPreset(c *gin.Context) {
 	c.JSON(200, cfg)
 }
 
-var privateFields = map[string]bool{"private_key": true, "privateKey": true, "decryption": true, "server_key": true, "key_content": true, "dns_env": true, "password": true, "obfs_password": true, "obfsPassword": true, "token": true, "secret": true}
-
 func redactConfig(value any) (any, bool) {
-	switch v := value.(type) {
-	case map[string]any:
-		out := map[string]any{}
-		private := false
-		for k, item := range v {
-			if privateFields[k] {
-				if item != nil {
-					if text, ok := item.(string); !ok || text != "" {
-						private = true
-					}
-				}
-				continue
-			}
-			safe, found := redactConfig(item)
-			private = private || found
-			out[k] = safe
-		}
-		return out, private
-	case []any:
-		out := make([]any, len(v))
-		private := false
-		for i, item := range v {
-			safe, found := redactConfig(item)
-			out[i] = safe
-			private = private || found
-		}
-		return out, private
-	default:
-		return value, false
+	// Lists need only this stable display/discovery projection. Unknown nested
+	// kernel dialects (including future credential names) stay private in full.
+	v, ok := value.(map[string]any)
+	if !ok {
+		return map[string]any{}, true
 	}
+	out := map[string]any{}
+	copyPrimitive := func(dst, src map[string]any, keys []string) {
+		for _, key := range keys {
+			switch x := src[key].(type) {
+			case string, bool, float64, json.Number:
+				dst[key] = x
+			}
+		}
+	}
+	copyPrimitive(out, v, []string{"protocol", "server_port", "listen_ip", "network", "tls", "kernel_type", "kernel_log_level", "preset", "flow", "cipher", "version", "up_mbps", "down_mbps"})
+	if connector, ok := v["connector"].(map[string]any); ok {
+		safe := map[string]any{}
+		copyPrimitive(safe, connector, []string{"kind", "user_id", "metrics_port", "hostname"})
+		out["connector"] = safe
+	}
+	original, _ := json.Marshal(v)
+	public, _ := json.Marshal(out)
+	return out, !bytes.Equal(original, public)
 }
 func publicNodeConfig(raw []byte) ([]byte, bool) {
 	var value any
@@ -85,11 +78,17 @@ func (a *API) fullNodeConfig(c *gin.Context, id int64, public []byte) ([]byte, b
 	var cipher []byte
 	e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT encrypted_config FROM node_private WHERE node_id=$1`, id).Scan(&cipher)
 	if e == pgx.ErrNoRows {
-		return public, true
+		return a.openNodeConfig(c, id, public, nil)
 	}
 	if e != nil {
 		internal(c, e)
 		return nil, false
+	}
+	return a.openNodeConfig(c, id, public, cipher)
+}
+func (a *API) openNodeConfig(c *gin.Context, id int64, public, cipher []byte) ([]byte, bool) {
+	if len(cipher) == 0 {
+		return public, true
 	}
 	if !a.requireBox(c) {
 		return nil, false
@@ -123,7 +122,7 @@ func (a *API) nodeDetail(c *gin.Context) {
 }
 
 // Encrypt legacy node JSON once a master key is supplied. Conversion is atomic
-// and existing encrypted records are not rewritten or read with a new key.
+// and existing ciphertext is preserved while stale public projections are scrubbed.
 func ProtectNodeSecrets(ctx context.Context, s *store.Store, key string) error {
 	if key == "" {
 		return nil
@@ -137,25 +136,33 @@ func ProtectNodeSecrets(ctx context.Context, s *store.Store, key string) error {
 		return e
 	}
 	defer tx.Rollback(ctx)
-	rows, e := tx.Query(ctx, `SELECT n.id,n.config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id WHERE p.node_id IS NULL FOR UPDATE OF n`)
+	rows, e := tx.Query(ctx, `SELECT n.id,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id FOR UPDATE OF n`)
 	if e != nil {
 		return e
 	}
 	type entry struct {
 		id          int64
 		raw, public []byte
+		existing    bool
 	}
 	entries := []entry{}
 	for rows.Next() {
 		var id int64
-		var raw []byte
-		if e = rows.Scan(&id, &raw); e != nil {
+		var raw, cipher []byte
+		if e = rows.Scan(&id, &raw, &cipher); e != nil {
 			rows.Close()
 			return e
 		}
+		if len(cipher) > 0 {
+			raw, e = box.Open(cipher, nodeContext(id))
+			if e != nil {
+				rows.Close()
+				return e
+			}
+		}
 		public, private := publicNodeConfig(raw)
 		if private {
-			entries = append(entries, entry{id, raw, public})
+			entries = append(entries, entry{id, raw, public, len(cipher) > 0})
 		}
 	}
 	e = rows.Err()
@@ -164,12 +171,14 @@ func ProtectNodeSecrets(ctx context.Context, s *store.Store, key string) error {
 		return e
 	}
 	for _, v := range entries {
-		cipher, e := box.Seal(v.raw, nodeContext(v.id))
-		if e != nil {
-			return e
-		}
-		if _, e = tx.Exec(ctx, `INSERT INTO node_private(node_id,encrypted_config) VALUES($1,$2)`, v.id, cipher); e != nil {
-			return e
+		if !v.existing {
+			cipher, e := box.Seal(v.raw, nodeContext(v.id))
+			if e != nil {
+				return e
+			}
+			if _, e = tx.Exec(ctx, `INSERT INTO node_private(node_id,encrypted_config) VALUES($1,$2)`, v.id, cipher); e != nil {
+				return e
+			}
 		}
 		if _, e = tx.Exec(ctx, `UPDATE nodes SET config=$2 WHERE id=$1`, v.id, v.public); e != nil {
 			return e

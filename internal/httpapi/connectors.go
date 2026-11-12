@@ -8,6 +8,7 @@ import (
 	"github.com/chinahch/luma/internal/proxy"
 	"github.com/chinahch/luma/internal/traffic"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"time"
 )
@@ -149,9 +150,20 @@ func (a *API) connectors(c *gin.Context) {
 			d.Credential = con.Secret
 			var routeRaw []byte
 			e = a.s.Pool.QueryRow(c.Request.Context(), `SELECT config FROM node_exit_routes WHERE node_id=$1`, n.id).Scan(&routeRaw)
+			if e != nil && e != pgx.ErrNoRows {
+				internal(c, e)
+				return
+			}
 			if e == nil {
 				var r proxy.Routes
-				json.Unmarshal(routeRaw, &r)
+				if json.Unmarshal(routeRaw, &r) != nil {
+					fail(c, 409, "invalid stored MTG exit routes")
+					return
+				}
+				if _, e = r.Compile(); e != nil {
+					fail(c, 409, "invalid stored MTG exit routes")
+					return
+				}
 				if len(r.Rules) > 0 {
 					fail(c, 409, "MTG supports only a default SOCKS5 exit")
 					return
@@ -166,7 +178,11 @@ func (a *API) connectors(c *gin.Context) {
 						fail(c, 409, "MTG exit must be an active plain SOCKS5 proxy")
 						return
 					}
-					d.SOCKSProxy, _ = p.Link()
+					d.SOCKSProxy, e = p.Link()
+					if e != nil {
+						fail(c, 409, "invalid stored MTG SOCKS5 exit")
+						return
+					}
 				}
 			}
 		}
@@ -221,7 +237,7 @@ func (a *API) connectorReport(c *gin.Context) {
 	a.ingest(c, id, report, "reliable")
 }
 func (a *API) telegramLinks(c *gin.Context) {
-	rows, e := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config FROM nodes n JOIN users u ON u.id=$1 WHERE n.active AND n.public_host<>'' AND n.config->'connector'->>'kind'='mtg' AND n.config->'connector'->>'user_id'=$2 AND u.used_bytes<u.quota_bytes AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY n.id`, current(c).ID, fmt.Sprint(current(c).ID))
+	rows, e := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id JOIN users u ON u.id=$1 WHERE n.active AND n.public_host<>'' AND n.config->'connector'->>'kind'='mtg' AND n.config->'connector'->>'user_id'=$2 AND u.used_bytes<u.quota_bytes AND (u.expires_at IS NULL OR u.expires_at>now()) ORDER BY n.id`, current(c).ID, fmt.Sprint(current(c).ID))
 	if e != nil {
 		internal(c, e)
 		return
@@ -231,12 +247,12 @@ func (a *API) telegramLinks(c *gin.Context) {
 	for rows.Next() {
 		var id int64
 		var name, host string
-		var raw []byte
-		if e = rows.Scan(&id, &name, &host, &raw); e != nil {
+		var raw, cipher []byte
+		if e = rows.Scan(&id, &name, &host, &raw, &cipher); e != nil {
 			internal(c, e)
 			return
 		}
-		full, ok := a.fullNodeConfig(c, id, raw)
+		full, ok := a.openNodeConfig(c, id, raw, cipher)
 		if !ok {
 			return
 		}

@@ -34,7 +34,7 @@ func (a *API) subscription(c *gin.Context) {
 		fail(c, 404, "subscription unavailable or quota expired")
 		return
 	}
-	rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT id,name,public_host,config FROM nodes WHERE active AND public_host<>'' ORDER BY id`)
+	rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id WHERE n.active AND n.public_host<>'' ORDER BY n.id`)
 	if err != nil {
 		internal(c, err)
 		return
@@ -45,13 +45,13 @@ func (a *API) subscription(c *gin.Context) {
 	for rows.Next() {
 		var id int64
 		var name, host string
-		var raw []byte
-		if err = rows.Scan(&id, &name, &host, &raw); err != nil {
+		var raw, cipher []byte
+		if err = rows.Scan(&id, &name, &host, &raw, &cipher); err != nil {
 			internal(c, err)
 			return
 		}
 		var ok bool
-		raw, ok = a.fullNodeConfig(c, id, raw)
+		raw, ok = a.openNodeConfig(c, id, raw, cipher)
 		if !ok {
 			return
 		}

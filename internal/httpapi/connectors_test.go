@@ -108,3 +108,37 @@ func TestNativeStatusCannotEraseConnectorReadiness(t *testing.T) {
 		t.Fatal("native status erased connector readiness")
 	}
 }
+
+func TestMTGRouteReadFailuresNeverRenewDirectLease(t *testing.T) {
+	_, s := setup(t)
+	h := New(s, nil, Config{MasterKey: strings.Repeat("01", 32)})
+	admin := login(t, h, "admin@example.test")
+	var owner int64
+	s.Pool.QueryRow(context.Background(), `SELECT id FROM users WHERE role='user'`).Scan(&owner)
+	w := request(h, "POST", "/api/admin/protocols/preset", map[string]any{"preset": "mtg", "port": 18443, "server_name": "front.example", "metrics_port": 21001, "owner_id": owner}, admin)
+	var cfg map[string]any
+	json.Unmarshal(w.Body.Bytes(), &cfg)
+	w = request(h, "POST", "/api/admin/nodes", map[string]any{"name": "MTG", "config": cfg}, admin)
+	var node struct {
+		ID    int64  `json:"id"`
+		Token string `json:"token"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &node)
+	if w.Code != 201 {
+		t.Fatal(w.Code)
+	}
+	path := fmt.Sprintf("/api/v3/server/connectors?node_id=%d&token=%s", node.ID, node.Token)
+	if _, e := s.Pool.Exec(context.Background(), `ALTER TABLE node_exit_routes RENAME TO unavailable_routes`); e != nil {
+		t.Fatal(e)
+	}
+	w = request(h, "GET", path, nil, nil)
+	if w.Code < 400 || strings.Contains(w.Body.String(), "lease_until") {
+		t.Fatal("database failure became a direct lease", w.Code)
+	}
+	s.Pool.Exec(context.Background(), `ALTER TABLE unavailable_routes RENAME TO node_exit_routes`)
+	s.Pool.Exec(context.Background(), `INSERT INTO node_exit_routes(node_id,config) VALUES($1,'"broken"')`, node.ID)
+	w = request(h, "GET", path, nil, nil)
+	if w.Code < 400 || strings.Contains(w.Body.String(), "lease_until") {
+		t.Fatal("malformed route became a direct lease", w.Code)
+	}
+}

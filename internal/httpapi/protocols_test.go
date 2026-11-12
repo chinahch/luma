@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/chinahch/luma/internal/store"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -84,5 +85,45 @@ func TestSubscriptionIncludesEncryptedSS2022AndAnyTLS(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "private_key") {
 		t.Fatal("inbound key leaked")
+	}
+}
+
+func TestCustomOutboundSecretsUseEncryptedCompleteConfig(t *testing.T) {
+	_, s := setup(t)
+	h := New(s, nil, Config{MasterKey: strings.Repeat("01", 32)})
+	admin := login(t, h, "admin@example.test")
+	cfg := map[string]any{"protocol": "vless", "server_port": 443, "custom_outbounds": []any{map[string]any{"tag": "proxy", "protocol": "socks", "settings": map[string]any{"servers": []any{map[string]any{"address": "exit.example", "port": 1080, "users": []any{map[string]any{"user": "test", "pass": "sentinel-private-pass", "id": "sentinel-private-id", "uuid": "sentinel-private-uuid", "secret_key": "sentinel-private-wireguard"}}}}}}}}
+	w := request(h, "POST", "/api/admin/nodes", map[string]any{"name": "custom", "config": cfg}, admin)
+	if w.Code != 201 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &created)
+	var raw []byte
+	s.Pool.QueryRow(context.Background(), `SELECT config FROM nodes WHERE id=$1`, created.ID).Scan(&raw)
+	if strings.Contains(string(raw), "sentinel-private") {
+		t.Fatal("custom credentials stored as plaintext")
+	}
+	w = request(h, "GET", "/api/admin/nodes", nil, admin)
+	if strings.Contains(w.Body.String(), "sentinel-private") {
+		t.Fatal("list exposed custom credentials")
+	}
+	w = request(h, "GET", fmt.Sprintf("/api/admin/nodes/%d", created.ID), nil, admin)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "sentinel-private-pass") {
+		t.Fatal("complete config not restored")
+	}
+	// Legacy conversion must cover arbitrary credential structures too.
+	legacy, _ := json.Marshal(cfg)
+	s.Pool.Exec(context.Background(), `UPDATE nodes SET config=$2 WHERE id=$1`, created.ID, legacy)
+	s.Pool.Exec(context.Background(), `INSERT INTO nodes(name,token_hash,config) VALUES('legacy',$1,$2)`, store.Hash("legacy-test-token"), legacy)
+	if e := ProtectNodeSecrets(context.Background(), s, strings.Repeat("01", 32)); e != nil {
+		t.Fatal(e)
+	}
+	var leaks int
+	s.Pool.QueryRow(context.Background(), `SELECT count(*) FROM nodes WHERE config::text LIKE '%sentinel-private%'`).Scan(&leaks)
+	if leaks != 0 {
+		t.Fatal("legacy credentials remained plaintext")
 	}
 }

@@ -53,6 +53,10 @@ MTG 只接受默认的普通 SOCKS5 落地，不支持域名/CIDR 分流。其�
 
 AES-256-GCM 加密落地凭据及节点私密配置，密文绑定记录身份；列表仅返回公开投影。首次提供密钥时，旧的节点私密 JSON 会原子转换为加密记录。迁移必须保留相同的 `LUMA_MASTER_KEY`，新生成的密钥无法解密旧数据库。
 
+节点列表的公开投影仅包含协议、内核、端口等必要字段；自定义内核 JSON 的完整内容加密保留，不依赖密码字段名称黑名单。高级配置需要先配置主密钥。错误的 ENC/REALITY 配置只输出安全的解析/创建/启动阶段提示，避免底层错误把密钥带进节点日志。
+
+MTG 报告有独立的并发发送预算，状态请求不会挤占计费上报时间。永久拒绝的报告保留在 worker 的 `queue/rejected/<节点ID>/`，仅暂停对应实例，其他用户继续上报。管理员修复拒绝原因后，应停止 worker，将原批次完整移回 `queue/` 再启动；不要改批次 ID 或删除未入账用量。
+
 除 PostgreSQL、`.env`、证书和部署 commit 外，使用连接器的机器还要停服务后安全迁移 `/var/lib/caddy-connect/queue`，并确保旧 worker 不再运行，避免新旧机器重复提供同一实例。启动前核对节点/Machine 身份、监听端口、域名与证书。不要将私有配置、队列或数据库备份提交到 Git。
 
 连接器的安装和 systemd 设置见 [Caddy connector](https://github.com/chinahch/caddy/tree/main/connector)。
