@@ -145,11 +145,34 @@ func (a *API) nodeConfig(c *gin.Context) {
 		return
 	}
 	var cfg map[string]any
+	raw, ok = a.fullNodeConfig(c, id, raw)
+	if !ok {
+		return
+	}
 	if json.Unmarshal(raw, &cfg) != nil {
 		fail(c, 500, "invalid stored node configuration")
 		return
 	}
+	if cfg["protocol"] == "mtproxy" {
+		fail(c, 409, "MTProxy is managed by luma-connect, not the native kernel")
+		return
+	}
+	if preset, _ := cfg["preset"].(string); preset != "" {
+		capable := false
+		for _, v := range strings.Split(c.GetHeader("X-Luma-Capabilities"), ",") {
+			if strings.TrimSpace(v) == "protocols-v1" {
+				capable = true
+			}
+		}
+		if !capable {
+			fail(c, 409, "node requires protocols-v1 capability for protocol presets")
+			return
+		}
+	}
 	cfg["base_config"] = gin.H{"push_interval": interval, "pull_interval": 60}
+	if !a.applyNodeExits(c, id, cfg) {
+		return
+	}
 	c.JSON(200, cfg)
 }
 func (a *API) nodeUsers(c *gin.Context) {
@@ -164,7 +187,7 @@ func (a *API) machineNodes(c *gin.Context) {
 		fail(c, 403, "machine credentials required")
 		return
 	}
-	a.jsonQuery(c, `SELECT jsonb_build_object('nodes',COALESCE(jsonb_agg(to_jsonb(t)),'[]'),'base_config',jsonb_build_object('push_interval',60,'pull_interval',60)) FROM (SELECT id,config->>'protocol' AS type,name FROM nodes WHERE machine_id=$1 AND active ORDER BY id)t`, ident.MachineID)
+	a.jsonQuery(c, `SELECT jsonb_build_object('nodes',COALESCE(jsonb_agg(to_jsonb(t)),'[]'),'base_config',jsonb_build_object('push_interval',60,'pull_interval',60)) FROM (SELECT id,config->>'protocol' AS type,name FROM nodes WHERE machine_id=$1 AND active AND config->>'protocol'<>'mtproxy' ORDER BY id)t`, ident.MachineID)
 }
 func (a *API) machineStatus(c *gin.Context) {
 	ident := c.MustGet("node_identity").(nodeIdentity)
@@ -263,7 +286,10 @@ func (a *API) ingest(c *gin.Context, id int64, report traffic.Report, quality st
 		body, _ := c.Get("node_body")
 		if m, ok := body.(map[string]json.RawMessage); ok {
 			if status := m["status"]; len(status) > 0 {
-				a.s.Pool.Exec(c.Request.Context(), `UPDATE nodes SET status=$2 WHERE id=$1`, id, status)
+				var object map[string]json.RawMessage
+				if json.Unmarshal(status, &object) == nil && object != nil {
+					a.s.Pool.Exec(c.Request.Context(), nodeStatusSQL, id, status)
+				}
 			}
 		}
 		if a.cache != nil {
@@ -286,9 +312,11 @@ func (a *API) legacyStatus(c *gin.Context) {
 		}
 	}
 	raw, _ := json.Marshal(status)
-	if _, err := a.s.Pool.Exec(c.Request.Context(), `UPDATE nodes SET status=$2 WHERE id=$1`, id, raw); err != nil {
+	if _, err := a.s.Pool.Exec(c.Request.Context(), nodeStatusSQL, id, raw); err != nil {
 		internal(c, err)
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})
 }
+
+const nodeStatusSQL = `UPDATE nodes SET status=($2::jsonb-'connector') || CASE WHEN status ? 'connector' THEN jsonb_build_object('connector',status->'connector') ELSE '{}'::jsonb END WHERE id=$1`

@@ -56,7 +56,18 @@ func (a *API) machines(c *gin.Context) {
 	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT m.id,m.name,m.last_report_at,m.status,m.created_at,(SELECT count(*) FROM nodes n WHERE n.machine_id=m.id) AS node_count FROM machines m ORDER BY m.id DESC)t`)
 }
 func (a *API) nodes(c *gin.Context) {
-	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT id,name,machine_id,active,multiplier_milli,report_interval,config,public_host,last_report_at,last_period_end,last_quality,last_up_bytes,last_down_bytes,last_window_seconds,status,created_at FROM nodes ORDER BY id DESC)t`)
+	var raw []byte
+	if e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT id,name,machine_id,active,multiplier_milli,report_interval,config,public_host,last_report_at,last_period_end,last_quality,last_up_bytes,last_down_bytes,last_window_seconds,status,created_at FROM nodes ORDER BY id DESC)t`).Scan(&raw); e != nil {
+		internal(c, e)
+		return
+	}
+	var nodes []map[string]any
+	json.Unmarshal(raw, &nodes)
+	for _, n := range nodes {
+		safe, _ := redactConfig(n["config"])
+		n["config"] = safe
+	}
+	c.JSON(200, nodes)
 }
 
 type userInput struct {
@@ -268,7 +279,7 @@ func validateNode(in *nodeInput) bool {
 	if json.Unmarshal(in.Config, &cfg) != nil {
 		return false
 	}
-	protocols := map[string]bool{"vless": true, "vmess": true, "trojan": true, "shadowsocks": true, "hysteria": true, "tuic": true, "anytls": true}
+	protocols := map[string]bool{"mtproxy": true, "socks": true, "http": true, "vless": true, "vmess": true, "trojan": true, "shadowsocks": true, "hysteria": true, "tuic": true, "anytls": true}
 	hostOK := in.PublicHost == "" || net.ParseIP(in.PublicHost) != nil || hostPattern.MatchString(in.PublicHost)
 	return validName(in.Name) && in.Multiplier >= 1 && in.Multiplier <= 100000 && in.Interval >= 10 && in.Interval <= 3600 && cfg.Port >= 1 && cfg.Port <= 65535 && protocols[cfg.Protocol] && hostOK && len(in.PublicHost) <= 253
 }
@@ -281,11 +292,32 @@ func (a *API) createNode(c *gin.Context) {
 		fail(c, 400, "invalid node configuration")
 		return
 	}
+	if !a.validateConnectorOwner(c, in.Config) {
+		return
+	}
 	token := store.NewToken()
+	public, private := publicNodeConfig(in.Config)
+	if private && !a.requireBox(c) {
+		return
+	}
+	tx, err := a.s.Pool.Begin(c.Request.Context())
+	if err != nil {
+		internal(c, err)
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
 	var id int64
-	err := a.s.Pool.QueryRow(c.Request.Context(), `INSERT INTO nodes(name,machine_id,active,token_hash,multiplier_milli,report_interval,config,public_host) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, in.Name, in.MachineID, in.Active, store.Hash(token), in.Multiplier, in.Interval, in.Config, in.PublicHost).Scan(&id)
+	err = tx.QueryRow(c.Request.Context(), `INSERT INTO nodes(name,machine_id,active,token_hash,multiplier_milli,report_interval,config,public_host) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, in.Name, in.MachineID, in.Active, store.Hash(token), in.Multiplier, in.Interval, public, in.PublicHost).Scan(&id)
 	if err != nil {
 		dbFailure(c, err)
+		return
+	}
+	if err = a.savePrivateNode(c, tx, id, in.Config); err != nil {
+		internal(c, err)
+		return
+	}
+	if err = tx.Commit(c.Request.Context()); err != nil {
+		internal(c, err)
 		return
 	}
 	c.JSON(201, gin.H{"id": id, "token": token, "notice": "shown once; store securely"})
@@ -303,13 +335,48 @@ func (a *API) updateNode(c *gin.Context) {
 		fail(c, 400, "invalid node configuration")
 		return
 	}
-	tag, err := a.s.Pool.Exec(c.Request.Context(), `UPDATE nodes SET name=$2,machine_id=$3,active=$4,multiplier_milli=$5,report_interval=$6,config=$7,public_host=$8 WHERE id=$1`, id, in.Name, in.MachineID, in.Active, in.Multiplier, in.Interval, in.Config, in.PublicHost)
+	if !a.validateConnectorOwner(c, in.Config) {
+		return
+	}
+	public, private := publicNodeConfig(in.Config)
+	if private && !a.requireBox(c) {
+		return
+	}
+	tx, err := a.s.Pool.Begin(c.Request.Context())
+	if err != nil {
+		internal(c, err)
+		return
+	}
+	defer tx.Rollback(c.Request.Context())
+	var oldConfig []byte
+	if err = tx.QueryRow(c.Request.Context(), `SELECT config FROM nodes WHERE id=$1 FOR UPDATE`, id).Scan(&oldConfig); err != nil {
+		fail(c, 404, "node not found")
+		return
+	}
+	var old, next struct {
+		Connector connectorConfig `json:"connector"`
+	}
+	json.Unmarshal(oldConfig, &old)
+	json.Unmarshal(in.Config, &next)
+	if old.Connector.Kind == "mtg" && (next.Connector.Kind != "mtg" || old.Connector.UserID != next.Connector.UserID) {
+		fail(c, 409, "MTG owner is permanent for this node; create a new node for another user")
+		return
+	}
+	tag, err := tx.Exec(c.Request.Context(), `UPDATE nodes SET name=$2,machine_id=$3,active=$4,multiplier_milli=$5,report_interval=$6,config=$7,public_host=$8 WHERE id=$1`, id, in.Name, in.MachineID, in.Active, in.Multiplier, in.Interval, public, in.PublicHost)
 	if err != nil {
 		dbFailure(c, err)
 		return
 	}
 	if tag.RowsAffected() != 1 {
 		fail(c, 404, "node not found")
+		return
+	}
+	if err = a.savePrivateNode(c, tx, id, in.Config); err != nil {
+		internal(c, err)
+		return
+	}
+	if err = tx.Commit(c.Request.Context()); err != nil {
+		internal(c, err)
 		return
 	}
 	c.JSON(200, gin.H{"ok": true})

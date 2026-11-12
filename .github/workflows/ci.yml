@@ -50,6 +50,7 @@ jobs:
       POSTGRES_PASSWORD: ci_disposable_only_3422
       COOKIE_SECURE: 'false'
       PUBLIC_URL: http://localhost:8088
+      LUMA_MASTER_KEY: '0101010101010101010101010101010101010101010101010101010101010101'
     steps:
       - uses: actions/checkout@v4
       - name: Validate and start isolated Compose stack
@@ -67,6 +68,9 @@ jobs:
           curl --fail -c /tmp/luma-cookie -H 'Content-Type: application/json' \
             -d '{"email":"ci@example.test","password":"ci-preview-password-only"}' http://localhost:8088/api/login
           curl --fail -b /tmp/luma-cookie http://localhost:8088/api/admin/users
+          curl --fail -b /tmp/luma-cookie -H 'Content-Type: application/json' \
+            -d '{"profiles":[{"name":"CI landing","protocol":"socks","server":"exit.example","port":1080,"username":"ci","password":"ci-test-only","transport":{"network":"tcp"},"tls":{"enabled":false}}]}' \
+            http://localhost:8088/api/admin/exits
           sh scripts/backup.sh /tmp/luma-ci.dump
       - name: Test recovery into a new empty instance
         run: |
@@ -75,8 +79,9 @@ jobs:
           docker compose up -d db redis --wait
           sh scripts/restore.sh /tmp/luma-ci.dump
           docker compose up -d --wait
-          curl --fail -H 'Content-Type: application/json' \
+          curl --fail -c /tmp/luma-restored-cookie -H 'Content-Type: application/json' \
             -d '{"email":"ci@example.test","password":"ci-preview-password-only"}' http://localhost:8088/api/login
+          curl --fail -b /tmp/luma-restored-cookie http://localhost:8088/api/admin/exits/1 | python3 -c 'import json,sys; assert json.load(sys.stdin)["password"] == "ci-test-only"'
       - name: Clean disposable CI stacks
         if: always()
         run: |

@@ -4,7 +4,7 @@
 
 Vue 3 · TypeScript · Naive UI · Go/Gin · PostgreSQL · Redis · Docker Compose
 
-> **0.1.0-preview**：工程预览版。已实现真实数据库与接口，不是静态演示；尚未通过生产节点、低内存 ARM64、完整备份恢复与真实业务压测验收。支付、工单、自动续费、Reality/全协议订阅、XLSX 导出与节点端可靠持久上报尚未实现。
+> **0.1.0-preview**：工程预览版。真实数据库、接口、原生协议回显连接及基础 Compose 换机恢复已验证；生产网络、真实 CF 账户、低内存 ARM64 和业务压测仍需验收。支付、工单、自动续费、XLSX 与原生节点端持久上报尚未实现。
 
 ## 已有功能
 
@@ -15,6 +15,9 @@ Vue 3 · TypeScript · Naive UI · Go/Gin · PostgreSQL · Redis · Docker Compo
 - v3 可靠批次接收 API：同一节点/批次事务防重，改变内容的同 ID 返回 409，账本与配额计数原子更新。
 - 普通用户仅能访问自身记录；个人 VLESS 订阅链接，可主动重新生成以撤销旧链接。
 - 深色/浅色、响应式布局。前端从同源 API 获取数据，不内嵌生产账号或演示凭据。
+- 落地链接单条/多行导入、去重、编辑、加密保存，按节点默认出站或域名/CIDR 分流；内核不兼容时明确拒绝。
+- 15 项协议组合的配置入口：原生 sing-box/Xray、六种 ENC 认证/外观、REALITY、WS、XHTTP/H3；CF Tunnel 和每用户 MTProxy 由独立连接器运行。
+- 原生协议分享链接订阅及个人 Telegram 代理链接。详见 [协议、落地和连接器](docs/protocols-exits.md)。
 
 ## 一台服务器部署
 
@@ -25,6 +28,8 @@ git clone https://github.com/chinahch/luma.git
 cd luma
 cp .env.example .env
 # 生成数据库密码，填入 .env 的 POSTGRES_PASSWORD；推荐使用此命令的十六进制结果
+openssl rand -hex 32
+# 再独立生成一份密钥，填入 LUMA_MASTER_KEY，用于落地和节点私密配置加密
 openssl rand -hex 32
 # 检查 .env 后启动
 docker compose up -d --build --wait

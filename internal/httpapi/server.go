@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chinahch/luma/internal/protocol"
+	"github.com/chinahch/luma/internal/secretbox"
 	"github.com/chinahch/luma/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -19,11 +21,13 @@ type Config struct {
 	SecureCookies bool
 	AllowedOrigin string
 	Timezone      string
+	MasterKey     string
 }
 type API struct {
 	s     *store.Store
 	cache *redis.Client
 	cfg   Config
+	box   *secretbox.Box
 }
 type User struct {
 	ID        int64      `json:"id"`
@@ -44,6 +48,13 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 		cfg.Timezone = "UTC"
 	}
 	a := &API{s: s, cache: cache, cfg: cfg}
+	if cfg.MasterKey != "" {
+		var err error
+		a.box, err = secretbox.New(cfg.MasterKey)
+		if err != nil {
+			panic(err)
+		}
+	}
 	r.Use(func(c *gin.Context) {
 		defer func() {
 			if recover() != nil {
@@ -80,6 +91,7 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	r.GET("/api/me", a.auth(), func(c *gin.Context) {
 		c.JSON(200, gin.H{"user": current(c), "timezone": cfg.Timezone, "version": "0.1.0-preview"})
 	})
+	r.GET("/api/me/telegram", a.auth(), a.telegramLinks)
 	r.GET("/api/dashboard", a.auth(), a.dashboard)
 	r.GET("/api/usage", a.auth(), a.usage)
 	r.GET("/api/usage/export", a.auth(), a.exportUsage)
@@ -101,8 +113,18 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	admin.GET("/machines", a.machines)
 	admin.POST("/machines", a.createMachine)
 	admin.GET("/nodes", a.nodes)
+	admin.GET("/nodes/:id", a.nodeDetail)
 	admin.POST("/nodes", a.createNode)
 	admin.PATCH("/nodes/:id", a.updateNode)
+	admin.GET("/exits", a.exits)
+	admin.POST("/exits/parse", a.parseExits)
+	admin.POST("/exits", a.createExits)
+	admin.GET("/exits/:id", a.exitDetail)
+	admin.PATCH("/exits/:id", a.updateExit)
+	admin.GET("/nodes/:id/exits", a.nodeExits)
+	admin.PUT("/nodes/:id/exits", a.saveNodeExits)
+	admin.GET("/protocols", func(c *gin.Context) { c.JSON(200, protocol.Catalog()) })
+	admin.POST("/protocols/preset", a.protocolPreset)
 	for _, prefix := range []string{"/api/v1/server/UniProxy", "/api/v2/server"} {
 		r.GET(prefix+"/config", a.nodeAuth(), a.nodeConfig)
 		r.GET(prefix+"/user", a.nodeAuth(), a.nodeUsers)
@@ -115,6 +137,9 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	r.POST("/api/v1/server/UniProxy/status", a.nodeAuth(), a.legacyStatus)
 	r.POST("/api/v1/server/UniProxy/alive", a.nodeAuth(), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
 	r.POST("/api/v3/server/report", a.nodeAuth(), a.reliableReport)
+	r.GET("/api/v3/server/connectors", a.nodeAuth(), a.connectors)
+	r.POST("/api/v3/server/connector/status", a.nodeAuth(), a.connectorStatus)
+	r.POST("/api/v3/server/connector/report", a.nodeAuth(), a.connectorReport)
 	return r
 }
 func fail(c *gin.Context, status int, message string) {

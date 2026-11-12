@@ -3,12 +3,11 @@ package httpapi
 import (
 	"encoding/base64"
 	"encoding/json"
-	"net"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chinahch/luma/internal/protocol"
 	"github.com/chinahch/luma/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -35,30 +34,47 @@ func (a *API) subscription(c *gin.Context) {
 		fail(c, 404, "subscription unavailable or quota expired")
 		return
 	}
-	rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT name,public_host,config FROM nodes WHERE active AND public_host<>'' AND config->>'protocol'='vless' ORDER BY id`)
+	rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id WHERE n.active AND n.public_host<>'' ORDER BY n.id`)
 	if err != nil {
 		internal(c, err)
 		return
 	}
 	defer rows.Close()
 	links := []string{}
+	skipped := 0
 	for rows.Next() {
+		var id int64
 		var name, host string
-		var raw []byte
-		if err = rows.Scan(&name, &host, &raw); err != nil {
+		var raw, cipher []byte
+		if err = rows.Scan(&id, &name, &host, &raw, &cipher); err != nil {
 			internal(c, err)
 			return
 		}
-		if link := vlessLink(uuid, name, host, raw); link != "" {
-			links = append(links, link)
+		var ok bool
+		raw, ok = a.openNodeConfig(c, id, raw, cipher)
+		if !ok {
+			return
 		}
+		var cfg map[string]any
+		json.Unmarshal(raw, &cfg)
+		profile, e := protocol.Client(uuid, name, host, cfg)
+		if e != nil {
+			skipped++
+			continue
+		}
+		link, e := profile.Link()
+		if e != nil {
+			skipped++
+			continue
+		}
+		links = append(links, link)
 	}
 	if rows.Err() != nil {
 		internal(c, rows.Err())
 		return
 	}
 	if len(links) == 0 {
-		fail(c, 503, "no supported VLESS nodes configured; other subscription formats are not implemented in this preview")
+		fail(c, 503, "no supported subscription nodes configured")
 		return
 	}
 	info := "upload=0; download=" + strconv.FormatInt(used, 10) + "; total=" + strconv.FormatInt(quota, 10)
@@ -66,65 +82,26 @@ func (a *API) subscription(c *gin.Context) {
 		info += "; expire=" + strconv.FormatInt(expiry.Unix(), 10)
 	}
 	c.Header("Subscription-Userinfo", info)
+	if skipped > 0 {
+		c.Header("X-Luma-Skipped-Nodes", strconv.Itoa(skipped))
+	}
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.Header("Content-Disposition", `attachment; filename="luma.txt"`)
 	c.String(200, base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))
 }
 func vlessLink(uuid, name, host string, raw []byte) string {
-	var cfg struct {
-		Port            int            `json:"server_port"`
-		Network         string         `json:"network"`
-		TLS             int            `json:"tls"`
-		ServerName      string         `json:"server_name"`
-		Host            string         `json:"host"`
-		TLSSettings     map[string]any `json:"tls_settings"`
-		Flow            string         `json:"flow"`
-		NetworkSettings map[string]any `json:"networkSettings"`
-	}
-	if json.Unmarshal(raw, &cfg) != nil || cfg.Port < 1 || cfg.TLS == 2 {
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil {
 		return ""
 	}
-	if cfg.Network == "" {
-		cfg.Network = "tcp"
-	}
-	if cfg.Network != "tcp" && cfg.Network != "ws" && cfg.Network != "xhttp" && cfg.Network != "grpc" {
+	cfg["protocol"] = "vless"
+	p, e := protocol.Client(uuid, name, host, cfg)
+	if e != nil {
 		return ""
 	}
-	q := url.Values{"encryption": {"none"}, "type": {cfg.Network}, "security": {"none"}}
-	if cfg.TLS == 1 {
-		q.Set("security", "tls")
-		sni := cfg.ServerName
-		if sni == "" {
-			sni = cfg.Host
-		}
-		if value, ok := cfg.TLSSettings["server_name"].(string); ok && value != "" {
-			sni = value
-		}
-		if sni == "" {
-			sni = host
-		}
-		q.Set("sni", sni)
+	link, e := p.Link()
+	if e != nil {
+		return ""
 	}
-	if cfg.Flow != "" {
-		q.Set("flow", cfg.Flow)
-	}
-	for _, key := range []string{"path", "host", "mode", "serviceName", "alpn"} {
-		if val, ok := cfg.NetworkSettings[key].(string); ok && val != "" {
-			q.Set(key, val)
-		}
-	}
-	if q.Get("serviceName") == "" {
-		if name, ok := cfg.NetworkSettings["service_name"].(string); ok {
-			q.Set("serviceName", name)
-		}
-	}
-	if q.Get("host") == "" {
-		if headers, ok := cfg.NetworkSettings["headers"].(map[string]any); ok {
-			if value, ok := headers["Host"].(string); ok {
-				q.Set("host", value)
-			}
-		}
-	}
-	u := url.URL{Scheme: "vless", User: url.User(uuid), Host: net.JoinHostPort(host, strconv.Itoa(cfg.Port)), RawQuery: q.Encode(), Fragment: name}
-	return u.String()
+	return link
 }
