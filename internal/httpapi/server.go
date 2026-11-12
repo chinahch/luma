@@ -112,6 +112,8 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	admin.PATCH("/plans/:id", a.updatePlan)
 	admin.GET("/machines", a.machines)
 	admin.POST("/machines", a.createMachine)
+	admin.POST("/machines/:id/token", a.rotateMachineToken)
+	admin.DELETE("/machines/:id", a.deleteMachine)
 	admin.GET("/nodes", a.nodes)
 	admin.GET("/nodes/:id", a.nodeDetail)
 	admin.POST("/nodes", a.createNode)
