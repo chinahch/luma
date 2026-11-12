@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,6 +72,14 @@ func (a *API) saveNodeExits(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true, "notice": "requires landing-v1 node; applied on next successful config refresh"})
 }
 func (a *API) compileNodeExits(c *gin.Context, r proxy.Routes, cfg map[string]any) ([]proxy.M, error) {
+	return a.compileNodeExitsWith(c.Request.Context(), a.s.Pool, r, cfg)
+}
+
+type exitQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func (a *API) compileNodeExitsWith(ctx context.Context, q exitQueryer, r proxy.Routes, cfg map[string]any) ([]proxy.M, error) {
 	kernel, _ := cfg["kernel_type"].(string)
 	mtg := cfg["protocol"] == "mtproxy"
 	if mtg {
@@ -85,15 +94,21 @@ func (a *API) compileNodeExits(c *gin.Context, r proxy.Routes, cfg map[string]an
 	out := []proxy.M{}
 	for _, id := range r.ExitIDs() {
 		var active bool
-		e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT active FROM exits WHERE id=$1`, id).Scan(&active)
+		var sid string
+		var cipher []byte
+		e := q.QueryRow(ctx, `SELECT active,secret_id::text,encrypted_profile FROM exits WHERE id=$1 FOR SHARE`, id).Scan(&active, &sid, &cipher)
 		if e == pgx.ErrNoRows || e == nil && !active {
 			return nil, fmt.Errorf("exit #%d missing or disabled", id)
 		}
 		if e != nil {
 			return nil, errors.New("cannot read exit")
 		}
-		p, ok := a.loadExit(c, id)
-		if !ok {
+		if a.box == nil {
+			return nil, errors.New("configure LUMA_MASTER_KEY before assigning exits")
+		}
+		raw, e := a.box.Open(cipher, "exit:"+sid)
+		var p proxy.Profile
+		if e != nil || json.Unmarshal(raw, &p) != nil {
 			return nil, errors.New("cannot decrypt exit")
 		}
 		if mtg && (p.Protocol != "socks" || p.TLS.Enabled) {
@@ -106,6 +121,36 @@ func (a *API) compileNodeExits(c *gin.Context, r proxy.Routes, cfg map[string]an
 		out = append(out, o)
 	}
 	return out, nil
+}
+
+func (a *API) saveNodeRouting(c *gin.Context, tx pgx.Tx, id int64, r *proxy.Routes, config []byte) bool {
+	if r == nil {
+		return true
+	}
+	if _, err := r.Compile(); err != nil {
+		fail(c, 400, err.Error())
+		return false
+	}
+	if len(r.ExitIDs()) > 0 {
+		if !a.requireBox(c) {
+			return false
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			fail(c, 400, "invalid node configuration")
+			return false
+		}
+		if _, err := a.compileNodeExitsWith(c.Request.Context(), tx, *r, cfg); err != nil {
+			fail(c, 400, err.Error())
+			return false
+		}
+	}
+	raw, _ := json.Marshal(r)
+	if _, err := tx.Exec(c.Request.Context(), `INSERT INTO node_exit_routes(node_id,config) VALUES($1,$2) ON CONFLICT(node_id) DO UPDATE SET config=excluded.config,updated_at=now()`, id, raw); err != nil {
+		dbFailure(c, err)
+		return false
+	}
+	return true
 }
 func (a *API) applyNodeExits(c *gin.Context, id int64, cfg map[string]any) bool {
 	var raw []byte

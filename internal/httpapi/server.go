@@ -112,6 +112,8 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	admin.PATCH("/plans/:id", a.updatePlan)
 	admin.GET("/machines", a.machines)
 	admin.POST("/machines", a.createMachine)
+	admin.PATCH("/machines/:id", a.renameMachine)
+	admin.POST("/machines/:id/enrollment", a.createEnrollment)
 	admin.POST("/machines/:id/token", a.rotateMachineToken)
 	admin.DELETE("/machines/:id", a.deleteMachine)
 	admin.GET("/nodes", a.nodes)
@@ -127,6 +129,7 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	admin.PUT("/nodes/:id/exits", a.saveNodeExits)
 	admin.GET("/protocols", func(c *gin.Context) { c.JSON(200, protocol.Catalog()) })
 	admin.POST("/protocols/preset", a.protocolPreset)
+	r.POST("/api/server/enroll", a.enrollMachine)
 	for _, prefix := range []string{"/api/v1/server/UniProxy", "/api/v2/server"} {
 		r.GET(prefix+"/config", a.nodeAuth(), a.nodeConfig)
 		r.GET(prefix+"/user", a.nodeAuth(), a.nodeUsers)

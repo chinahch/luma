@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chinahch/luma/internal/proxy"
 	"github.com/chinahch/luma/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -247,13 +248,14 @@ func (a *API) createMachine(c *gin.Context) {
 }
 
 type nodeInput struct {
-	Name       string          `json:"name"`
-	MachineID  *int64          `json:"machine_id"`
-	Active     *bool           `json:"active"`
-	Multiplier int             `json:"multiplier_milli"`
-	Interval   int             `json:"report_interval"`
-	Config     json.RawMessage `json:"config"`
-	PublicHost string          `json:"public_host"`
+	Name        string          `json:"name"`
+	MachineID   *int64          `json:"machine_id"`
+	Active      *bool           `json:"active"`
+	Multiplier  int             `json:"multiplier_milli"`
+	Interval    int             `json:"report_interval"`
+	Config      json.RawMessage `json:"config"`
+	PublicHost  string          `json:"public_host"`
+	ExitRouting *proxy.Routes   `json:"exit_routing,omitempty"`
 }
 
 var hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$`)
@@ -316,6 +318,9 @@ func (a *API) createNode(c *gin.Context) {
 		internal(c, err)
 		return
 	}
+	if !a.saveNodeRouting(c, tx, id, in.ExitRouting, in.Config) {
+		return
+	}
 	if err = tx.Commit(c.Request.Context()); err != nil {
 		internal(c, err)
 		return
@@ -373,6 +378,9 @@ func (a *API) updateNode(c *gin.Context) {
 	}
 	if err = a.savePrivateNode(c, tx, id, in.Config); err != nil {
 		internal(c, err)
+		return
+	}
+	if !a.saveNodeRouting(c, tx, id, in.ExitRouting, in.Config) {
 		return
 	}
 	if err = tx.Commit(c.Request.Context()); err != nil {
