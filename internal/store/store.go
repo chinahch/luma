@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,11 +26,20 @@ var migration3 string
 //go:embed migration4.sql
 var migration4 string
 
+//go:embed migration5.sql
+var migration5 string
+
+//go:embed migration6.sql
+var migration6 string
+
 var ErrConflict = errors.New("report identity conflicts with existing payload")
 var ErrForbidden = errors.New("node is not active or authorized")
 var ErrInvalid = errors.New("invalid accounting entry")
 
-type Store struct{ Pool *pgxpool.Pool }
+type Store struct {
+	Pool          *pgxpool.Pool
+	cycleLocation atomic.Pointer[time.Location]
+}
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
@@ -68,7 +78,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err = tx.QueryRow(ctx, `SELECT version FROM schema_version WHERE id=1`).Scan(&version); err != nil {
 			return err
 		}
-		if version < 1 || version > 4 {
+		if version < 1 || version > 6 {
 			return fmt.Errorf("unsupported database version %d", version)
 		}
 	} else {
@@ -88,6 +98,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if version <= 3 {
 		if _, err = tx.Exec(ctx, migration4); err != nil {
+			return err
+		}
+	}
+	if version <= 4 {
+		if _, err = tx.Exec(ctx, migration5); err != nil {
+			return err
+		}
+	}
+	if version <= 5 {
+		if _, err = tx.Exec(ctx, migration6); err != nil {
 			return err
 		}
 	}

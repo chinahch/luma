@@ -106,7 +106,7 @@ func (a *API) nodeDetail(c *gin.Context) {
 		return
 	}
 	var raw []byte
-	e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT config FROM nodes WHERE id=$1`, id).Scan(&raw)
+	e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT config FROM nodes WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&raw)
 	if e == pgx.ErrNoRows {
 		fail(c, 404, "node not found")
 		return
@@ -117,7 +117,32 @@ func (a *API) nodeDetail(c *gin.Context) {
 	}
 	raw, ok = a.fullNodeConfig(c, id, raw)
 	if ok {
-		c.Data(200, "application/json", raw)
+		var config map[string]any
+		if err := json.Unmarshal(raw, &config); err != nil {
+			internal(c, err)
+			return
+		}
+		var planIDs []int64 = []int64{}
+		rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT plan_id FROM node_plans WHERE node_id=$1 ORDER BY plan_id`, id)
+		if err != nil {
+			internal(c, err)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var planID int64
+			if err = rows.Scan(&planID); err != nil {
+				internal(c, err)
+				return
+			}
+			planIDs = append(planIDs, planID)
+		}
+		if err = rows.Err(); err != nil {
+			internal(c, err)
+			return
+		}
+		config["plan_ids"] = planIDs
+		c.JSON(200, config)
 	}
 }
 

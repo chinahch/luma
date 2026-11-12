@@ -35,7 +35,7 @@ location / {
 单机 Compose 并不提供无停机迁移。旧节点没有持久上报队列，停机窗口可能丢用量；不要将它称为零损失计费迁移。
 
 ## 更新与回滚
-更新前备份并记录当前 commit。检出目标版本，`docker compose build` 后启动；API 用 PostgreSQL advisory lock 串行执行迁移。当前数据库版本为 4（v2 落地/路由，v3 节点私密配置，v4 自动接入）；遇到不支持的版本会拒绝启动，不尝试任意降级。旧程序无法直接读取更高版本数据库，回滚应使用对应备份恢复到新实例。
+更新前备份并记录当前 commit。检出目标版本，`docker compose build` 后启动；API 用 PostgreSQL advisory lock 串行执行迁移。当前数据库版本为 6（v2 落地/路由，v3 节点私密配置，v4 自动接入，v5 账户套餐/月度周期，v6 检测诊断）；遇到不支持的版本会拒绝启动，不尝试任意降级。旧程序无法直接读取更高版本数据库，回滚应使用对应备份恢复到新实例。
 
 启用协议密钥/落地后必须同时备份相同的 `LUMA_MASTER_KEY`。连接器还需停机迁移私有待上报队列；具体步骤见 [协议、落地和连接器](protocols-exits.md)。
 
@@ -45,3 +45,5 @@ location / {
 
 ## 验证状态
 本地已使用独立 PostgreSQL 验证事务与鉴权，前端可构建并有本机浏览器 QA。当前 Windows 环境无 Docker；Compose 启动、镜像运行、pg_dump/pg_restore 的完整恢复演练需由 Linux CI 或测试机实际运行后才算通过。见 tests/与 CI 的真实结果，不以本文存在代替验收。
+
+账户、邀请、订阅、套餐权限、月度流量与新版节点检测升级详见 [账户与故障检查](account-plans-health.md)。

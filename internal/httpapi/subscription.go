@@ -13,28 +13,27 @@ import (
 )
 
 func (a *API) rotateSubscription(c *gin.Context) {
-	token := store.NewToken()
-	if _, err := a.s.Pool.Exec(c.Request.Context(), `UPDATE users SET subscription_hash=$2 WHERE id=$1`, current(c).ID, store.Hash(token)); err != nil {
+	a.savedSubscription(c, current(c).ID, "rotate", "")
+}
+func (a *API) subscription(c *gin.Context) {
+	if err := a.s.RefreshCycles(c.Request.Context(), time.Now()); err != nil {
 		internal(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"path": "/sub/" + token, "notice": "previous subscription link is now revoked"})
-}
-func (a *API) subscription(c *gin.Context) {
 	token := c.Param("token")
 	if len(token) != 43 {
 		fail(c, 404, "subscription not found")
 		return
 	}
 	var uuid string
-	var used, quota int64
+	var used, quota, userID int64
 	var expiry *time.Time
-	err := a.s.Pool.QueryRow(c.Request.Context(), `SELECT uuid,used_bytes,quota_bytes,expires_at FROM users WHERE subscription_hash=$1 AND active AND used_bytes<quota_bytes AND (expires_at IS NULL OR expires_at>now())`, store.Hash(token)).Scan(&uuid, &used, &quota, &expiry)
+	err := a.s.Pool.QueryRow(c.Request.Context(), `SELECT uuid,used_bytes,quota_bytes,expires_at,id FROM users WHERE subscription_hash=$1 AND active AND deleted_at IS NULL AND used_bytes<quota_bytes AND (expires_at IS NULL OR expires_at>now())`, store.Hash(token)).Scan(&uuid, &used, &quota, &expiry, &userID)
 	if err != nil {
 		fail(c, 404, "subscription unavailable or quota expired")
 		return
 	}
-	rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id WHERE n.active AND n.public_host<>'' ORDER BY n.id`)
+	rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id WHERE n.active AND n.public_host<>'' AND (NOT EXISTS(SELECT 1 FROM node_plans np WHERE np.node_id=n.id) OR EXISTS(SELECT 1 FROM node_plans np JOIN users u ON u.id=$1 WHERE np.node_id=n.id AND np.plan_id=u.plan_id)) ORDER BY n.id`, userID)
 	if err != nil {
 		internal(c, err)
 		return

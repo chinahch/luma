@@ -4,8 +4,8 @@ import { NAlert,NButton,NDataTable,NIcon,NSelect,NTag,useMessage } from 'naive-u
 import { Download,Filter,ArrowUpRight,ArrowDownRight,Receipt } from '@vicons/tabler'
 import { api,bytes,stamp } from '../api'
 import {calendarRange} from '../calendar'
-const props=defineProps<{me:any;zone:string}>();const message=useMessage()
-const rows=ref<any[]>([]),meta=ref<any>({}),busy=ref(false),error=ref(''),users=ref<any[]>([]),nodes=ref<any[]>([]),userID=ref<number|null>(null),nodeID=ref<number|null>(null),timezone=ref(props.zone),grain=ref('day')
+const props=defineProps<{me:any;zone:string;userId?:number}>();const message=useMessage()
+const rows=ref<any[]>([]),meta=ref<any>({}),busy=ref(false),error=ref(''),users=ref<any[]>([]),nodes=ref<any[]>([]),userID=ref<number|null>(props.userId??null),nodeID=ref<number|null>(null),timezone=ref(props.zone),grain=ref('day')
 const initialRange=calendarRange(props.zone,7);const from=ref(initialRange.from),to=ref(initialRange.to)
 const zones=['UTC','Asia/Shanghai','Asia/Hong_Kong','Asia/Tokyo','America/Los_Angeles','Europe/London'].map(x=>({label:x,value:x}))
 function query(){const q=new URLSearchParams({from:from.value,to:to.value,timezone:timezone.value,grain:grain.value});if(userID.value)q.set('user_id',String(userID.value));if(nodeID.value)q.set('node_id',String(nodeID.value));return q.toString()}

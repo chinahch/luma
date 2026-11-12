@@ -30,14 +30,16 @@ type API struct {
 	box   *secretbox.Box
 }
 type User struct {
-	ID        int64      `json:"id"`
-	Email     string     `json:"email"`
-	Role      string     `json:"role"`
-	Active    bool       `json:"active"`
-	Quota     int64      `json:"quota_bytes"`
-	Used      int64      `json:"used_bytes"`
-	ExpiresAt *time.Time `json:"expires_at"`
-	PlanID    *int64     `json:"plan_id"`
+	ID          int64      `json:"id"`
+	Email       string     `json:"email"`
+	Role        string     `json:"role"`
+	Active      bool       `json:"active"`
+	Quota       int64      `json:"quota_bytes"`
+	Used        int64      `json:"used_bytes"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	PlanID      *int64     `json:"plan_id"`
+	NextResetAt *time.Time `json:"next_reset_at"`
+	OpenedAt    *time.Time `json:"opened_at"`
 }
 
 func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
@@ -48,6 +50,9 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 		cfg.Timezone = "UTC"
 	}
 	a := &API{s: s, cache: cache, cfg: cfg}
+	if err := s.SetTimezone(cfg.Timezone); err != nil {
+		panic(err)
+	}
 	if cfg.MasterKey != "" {
 		var err error
 		a.box, err = secretbox.New(cfg.MasterKey)
@@ -104,6 +109,9 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 		}
 		c.Next()
 	})
+	a.registerAccountRoutes(r, admin)
+	a.registerBusinessRoutes(r, admin)
+	a.registerProbeRoutes(r, admin)
 	admin.GET("/users", a.users)
 	admin.POST("/users", a.createUser)
 	admin.PATCH("/users/:id", a.updateUser)

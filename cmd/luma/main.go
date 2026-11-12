@@ -114,7 +114,25 @@ func run() error {
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
-	server := &http.Server{Addr: addr, Handler: httpapi.New(s, cache, httpapi.Config{SecureCookies: secure, AllowedOrigin: origin, Timezone: zone, MasterKey: masterKey}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+	handler := httpapi.New(s, cache, httpapi.Config{SecureCookies: secure, AllowedOrigin: origin, Timezone: zone, MasterKey: masterKey})
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			cycleCtx, cycleCancel := context.WithTimeout(ctx, 30*time.Second)
+			err := s.RefreshCycles(cycleCtx, time.Now())
+			cycleCancel()
+			if err != nil && ctx.Err() == nil {
+				slog.Error("monthly quota reset failed; will retry")
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	done := make(chan error, 1)
 	go func() { slog.Info("Luma preview listening", "address", addr); done <- server.ListenAndServe() }()
 	select {
