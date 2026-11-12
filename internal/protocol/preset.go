@@ -14,18 +14,19 @@ import (
 
 type M = map[string]any
 type Input struct {
-	Preset         string `json:"preset"`
-	Port           int    `json:"port"`
-	ServerName     string `json:"server_name"`
-	Destination    string `json:"destination"`
-	Path           string `json:"path"`
-	CertFile       string `json:"cert_file"`
-	KeyFile        string `json:"key_file"`
-	Authentication string `json:"authentication"`
-	Appearance     string `json:"appearance"`
-	MetricsPort    int    `json:"metrics_port"`
-	TunnelToken    string `json:"tunnel_token"`
-	OwnerID        int64  `json:"owner_id"`
+	Preset         string             `json:"preset"`
+	Port           int                `json:"port"`
+	ServerName     string             `json:"server_name"`
+	Destination    string             `json:"destination"`
+	Path           string             `json:"path"`
+	CertFile       string             `json:"cert_file"`
+	KeyFile        string             `json:"key_file"`
+	Authentication string             `json:"authentication"`
+	Appearance     string             `json:"appearance"`
+	MetricsPort    int                `json:"metrics_port"`
+	TunnelToken    string             `json:"tunnel_token"`
+	OwnerID        int64              `json:"owner_id"`
+	Certificate    *CertificateConfig `json:"certificate,omitempty"`
 }
 type Preset struct {
 	ID      string `json:"id"`
@@ -72,6 +73,9 @@ func Build(in Input) (M, error) {
 	if in.Port < 1 || in.Port > 65535 {
 		return nil, errors.New("port must be 1..65535")
 	}
+	if in.ServerName == "" && (preset.Reality || in.Preset == "mtg") {
+		in.ServerName = "addons.mozilla.org"
+	}
 	if in.Preset == "cf-tunnel" || in.Preset == "mtg" {
 		if in.MetricsPort < 1024 || in.MetricsPort > 65535 || in.MetricsPort == in.Port {
 			return nil, errors.New("connector metrics port must be 1024..65535 and different from the listener")
@@ -113,13 +117,31 @@ func Build(in Input) (M, error) {
 		}
 	}
 	if preset.TLS {
-		if !strings.HasPrefix(in.CertFile, "/") || !strings.HasPrefix(in.KeyFile, "/") || strings.ContainsAny(in.CertFile+in.KeyFile, "\r\n\x00") {
-			return nil, errors.New("absolute certificate and key paths on the node are required")
-		}
 		c["tls"] = 1
 		c["server_name"] = in.ServerName
 		c["tls_settings"] = M{"server_name": in.ServerName}
-		c["cert_config"] = M{"cert_mode": "file", "domain": in.ServerName, "cert_file": in.CertFile, "key_file": in.KeyFile}
+		cc := CertificateConfig{CertMode: "dns", Domain: in.ServerName, DNSProvider: "cloudflare"}
+		if in.Certificate != nil {
+			cc = *in.Certificate
+		} else if in.CertFile != "" || in.KeyFile != "" {
+			cc = CertificateConfig{CertMode: "file", Domain: in.ServerName, CertFile: in.CertFile, KeyFile: in.KeyFile}
+		}
+		if cc.Domain == "" {
+			cc.Domain = in.ServerName
+		}
+		if cc.CertMode == "dns" {
+			p, ok := FindDNSProvider(cc.DNSProvider)
+			if !ok {
+				return nil, errors.New("unsupported DNS provider")
+			}
+			cc.DNSProvider = p.Name
+		}
+		c["cert_config"] = CertificateMap(cc)
+		if in.Certificate != nil || cc.CertMode == "file" {
+			if err := ValidateCertificate(c); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if preset.Reality {
 		dest := in.Destination

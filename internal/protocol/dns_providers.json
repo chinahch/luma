@@ -1,0 +1,382 @@
+[
+  {
+    "name": "alidns",
+    "aliases": [
+      "aliyun"
+    ],
+    "keys": [
+      "ALICLOUD_ACCESS_KEY_ID",
+      "ALICLOUD_ACCESS_KEY_SECRET",
+      "ALIYUN_ACCESS_KEY_ID",
+      "ALIYUN_ACCESS_KEY_SECRET",
+      "ALI_ACCESS_KEY_ID",
+      "ALI_ACCESS_KEY_SECRET"
+    ],
+    "required": [
+      [
+        "ALICLOUD_ACCESS_KEY_ID",
+        "ALI_ACCESS_KEY_ID",
+        "ALIYUN_ACCESS_KEY_ID"
+      ],
+      [
+        "ALICLOUD_ACCESS_KEY_SECRET",
+        "ALI_ACCESS_KEY_SECRET",
+        "ALIYUN_ACCESS_KEY_SECRET"
+      ]
+    ]
+  },
+  {
+    "name": "azure",
+    "aliases": [],
+    "keys": [
+      "AZURE_CLIENT_ID",
+      "AZURE_CLIENT_SECRET",
+      "AZURE_RESOURCE_GROUP",
+      "AZURE_RESOURCE_GROUP_NAME",
+      "AZURE_SUBSCRIPTION_ID",
+      "AZURE_TENANT_ID"
+    ],
+    "required": [
+      [
+        "AZURE_SUBSCRIPTION_ID"
+      ],
+      [
+        "AZURE_RESOURCE_GROUP_NAME",
+        "AZURE_RESOURCE_GROUP"
+      ]
+    ]
+  },
+  {
+    "name": "bunny",
+    "aliases": [],
+    "keys": [
+      "BUNNY_ACCESS_KEY",
+      "BUNNY_API_KEY"
+    ],
+    "required": [
+      [
+        "BUNNY_ACCESS_KEY",
+        "BUNNY_API_KEY"
+      ]
+    ]
+  },
+  {
+    "name": "cloudflare",
+    "aliases": [
+      "cf"
+    ],
+    "keys": [
+      "CF_API_TOKEN",
+      "CLOUDFLARE_API_TOKEN",
+      "CLOUDFLARE_DNS_API_TOKEN"
+    ],
+    "required": [
+      [
+        "CLOUDFLARE_DNS_API_TOKEN",
+        "CF_API_TOKEN",
+        "CLOUDFLARE_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "desec",
+    "aliases": [],
+    "keys": [
+      "DESEC_API_TOKEN",
+      "DESEC_TOKEN"
+    ],
+    "required": [
+      [
+        "DESEC_TOKEN",
+        "DESEC_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "digitalocean",
+    "aliases": [
+      "do"
+    ],
+    "keys": [
+      "DIGITALOCEAN_API_TOKEN",
+      "DIGITALOCEAN_TOKEN",
+      "DO_AUTH_TOKEN"
+    ],
+    "required": [
+      [
+        "DO_AUTH_TOKEN",
+        "DIGITALOCEAN_TOKEN",
+        "DIGITALOCEAN_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "duckdns",
+    "aliases": [],
+    "keys": [
+      "DUCKDNS_API_TOKEN",
+      "DUCKDNS_OVERRIDE_DOMAIN",
+      "DUCKDNS_TOKEN"
+    ],
+    "required": [
+      [
+        "DUCKDNS_TOKEN",
+        "DUCKDNS_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "gandi",
+    "aliases": [],
+    "keys": [
+      "GANDI_API_TOKEN",
+      "GANDI_BEARER_TOKEN",
+      "GANDI_PERSONAL_ACCESS_TOKEN"
+    ],
+    "required": [
+      [
+        "GANDI_BEARER_TOKEN",
+        "GANDI_API_TOKEN",
+        "GANDI_PERSONAL_ACCESS_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "godaddy",
+    "aliases": [],
+    "keys": [
+      "GODADDY_API_KEY",
+      "GODADDY_API_SECRET",
+      "GODADDY_API_TOKEN"
+    ],
+    "required": [],
+    "credential_sets": [
+      [
+        [
+          "GODADDY_API_TOKEN"
+        ]
+      ],
+      [
+        [
+          "GODADDY_API_KEY"
+        ],
+        [
+          "GODADDY_API_SECRET"
+        ]
+      ]
+    ]
+  },
+  {
+    "name": "googleclouddns",
+    "aliases": [
+      "gcp",
+      "gcloud"
+    ],
+    "keys": [
+      "GCE_PROJECT",
+      "GCE_SERVICE_ACCOUNT_FILE",
+      "GCP_PROJECT",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "GOOGLE_PROJECT_ID"
+    ],
+    "required": [
+      [
+        "GCE_PROJECT",
+        "GOOGLE_PROJECT_ID",
+        "GCP_PROJECT"
+      ]
+    ]
+  },
+  {
+    "name": "hetzner",
+    "aliases": [],
+    "keys": [
+      "HETZNER_API_TOKEN",
+      "HETZNER_DNS_API_TOKEN"
+    ],
+    "required": [
+      [
+        "HETZNER_API_TOKEN",
+        "HETZNER_DNS_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "huaweicloud",
+    "aliases": [
+      "huawei"
+    ],
+    "keys": [
+      "HUAWEICLOUD_ACCESS_KEY_ID",
+      "HUAWEICLOUD_REGION_ID",
+      "HUAWEICLOUD_SECRET_ACCESS_KEY",
+      "HUAWEI_ACCESS_KEY_ID",
+      "HUAWEI_REGION",
+      "HUAWEI_SECRET_ACCESS_KEY"
+    ],
+    "required": [
+      [
+        "HUAWEICLOUD_ACCESS_KEY_ID",
+        "HUAWEI_ACCESS_KEY_ID"
+      ],
+      [
+        "HUAWEICLOUD_SECRET_ACCESS_KEY",
+        "HUAWEI_SECRET_ACCESS_KEY"
+      ]
+    ]
+  },
+  {
+    "name": "linode",
+    "aliases": [],
+    "keys": [
+      "LINODE_API_TOKEN",
+      "LINODE_TOKEN"
+    ],
+    "required": [
+      [
+        "LINODE_TOKEN",
+        "LINODE_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "namecheap",
+    "aliases": [],
+    "keys": [
+      "NAMECHEAP_API_ENDPOINT",
+      "NAMECHEAP_API_KEY",
+      "NAMECHEAP_API_USER",
+      "NAMECHEAP_CLIENT_IP",
+      "NAMECHEAP_USER"
+    ],
+    "required": [
+      [
+        "NAMECHEAP_API_KEY"
+      ],
+      [
+        "NAMECHEAP_API_USER",
+        "NAMECHEAP_USER"
+      ]
+    ]
+  },
+  {
+    "name": "namesilo",
+    "aliases": [],
+    "keys": [
+      "NAMESILO_API_TOKEN"
+    ],
+    "required": [
+      [
+        "NAMESILO_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "netlify",
+    "aliases": [],
+    "keys": [
+      "NETLIFY_API_TOKEN",
+      "NETLIFY_AUTH_TOKEN",
+      "NETLIFY_PERSONAL_ACCESS_TOKEN"
+    ],
+    "required": [
+      [
+        "NETLIFY_PERSONAL_ACCESS_TOKEN",
+        "NETLIFY_AUTH_TOKEN",
+        "NETLIFY_API_TOKEN"
+      ]
+    ]
+  },
+  {
+    "name": "ovh",
+    "aliases": [],
+    "keys": [
+      "OVH_APPLICATION_KEY",
+      "OVH_APPLICATION_SECRET",
+      "OVH_CONSUMER_KEY",
+      "OVH_ENDPOINT"
+    ],
+    "required": [
+      [
+        "OVH_APPLICATION_KEY"
+      ],
+      [
+        "OVH_APPLICATION_SECRET"
+      ],
+      [
+        "OVH_CONSUMER_KEY"
+      ]
+    ]
+  },
+  {
+    "name": "porkbun",
+    "aliases": [],
+    "keys": [
+      "PORKBUN_API_KEY",
+      "PORKBUN_API_SECRET_KEY",
+      "PORKBUN_SECRET_API_KEY"
+    ],
+    "required": [
+      [
+        "PORKBUN_API_KEY"
+      ],
+      [
+        "PORKBUN_API_SECRET_KEY",
+        "PORKBUN_SECRET_API_KEY"
+      ]
+    ]
+  },
+  {
+    "name": "route53",
+    "aliases": [
+      "aws"
+    ],
+    "keys": [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_DEFAULT_REGION",
+      "AWS_HOSTED_ZONE_ID",
+      "AWS_PROFILE",
+      "AWS_REGION",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN"
+    ],
+    "required": []
+  },
+  {
+    "name": "tencentcloud",
+    "aliases": [
+      "tencent"
+    ],
+    "keys": [
+      "TENCENTCLOUD_REGION",
+      "TENCENTCLOUD_SECRET_ID",
+      "TENCENTCLOUD_SECRET_KEY",
+      "TENCENT_SECRET_ID",
+      "TENCENT_SECRET_KEY"
+    ],
+    "required": [
+      [
+        "TENCENTCLOUD_SECRET_ID",
+        "TENCENT_SECRET_ID"
+      ],
+      [
+        "TENCENTCLOUD_SECRET_KEY",
+        "TENCENT_SECRET_KEY"
+      ]
+    ]
+  },
+  {
+    "name": "vultr",
+    "aliases": [],
+    "keys": [
+      "VULTR_API_KEY",
+      "VULTR_API_TOKEN"
+    ],
+    "required": [
+      [
+        "VULTR_API_TOKEN",
+        "VULTR_API_KEY"
+      ]
+    ]
+  }
+]

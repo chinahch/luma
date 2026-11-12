@@ -54,7 +54,7 @@ func (a *API) plans(c *gin.Context) {
 	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT * FROM plans ORDER BY id)t`)
 }
 func (a *API) machines(c *gin.Context) {
-	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT m.id,m.name,m.last_report_at,m.status,m.created_at,(SELECT count(*) FROM nodes n WHERE n.machine_id=m.id) AS node_count FROM machines m ORDER BY m.id DESC)t`)
+	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT m.id,m.name,m.last_report_at,m.status,m.created_at,COALESCE(g.country,'') AS country,(SELECT count(*) FROM nodes n WHERE n.machine_id=m.id AND n.deleted_at IS NULL) AS node_count FROM machines m LEFT JOIN machine_countries g ON g.machine_id=m.id AND m.status->'public_addresses'->>'source'='physical_interface' AND host(g.ip)=COALESCE(m.status->'public_addresses'->'ipv4'->>0,m.status->'public_addresses'->'ipv6'->>0) ORDER BY m.id DESC)t`)
 }
 func (a *API) nodes(c *gin.Context) {
 	var raw []byte
@@ -292,11 +292,23 @@ func validateNode(in *nodeInput) bool {
 		in.Config = json.RawMessage(`{"protocol":"vless","listen_ip":"0.0.0.0","server_port":443,"network":"tcp","tls":0}`)
 	}
 	var cfg struct {
-		Protocol string `json:"protocol"`
-		Port     int    `json:"server_port"`
+		Protocol  string           `json:"protocol"`
+		Port      int              `json:"server_port"`
+		Connector *connectorConfig `json:"connector"`
 	}
 	if json.Unmarshal(in.Config, &cfg) != nil {
 		return false
+	}
+	if cfg.Connector != nil && cfg.Connector.Kind == "cloudflared" {
+		host := cfg.Connector.Hostname
+		if len(host) < 3 || len(host) > 253 || !hostPattern.MatchString(host) {
+			return false
+		}
+		if in.PublicHost == "" {
+			in.PublicHost = host
+		} else if in.PublicHost != host {
+			return false
+		}
 	}
 	protocols := map[string]bool{"mtproxy": true, "socks": true, "http": true, "vless": true, "vmess": true, "trojan": true, "shadowsocks": true, "hysteria": true, "tuic": true, "anytls": true}
 	hostOK := in.PublicHost == "" || net.ParseIP(in.PublicHost) != nil || hostPattern.MatchString(in.PublicHost)
@@ -314,6 +326,12 @@ func (a *API) createNode(c *gin.Context) {
 	if !a.validateConnectorOwner(c, in.Config) {
 		return
 	}
+	resolved, certErr := resolveCertificateConfig(in.Config, nil)
+	if certErr != nil {
+		fail(c, 400, certErr.Error())
+		return
+	}
+	in.Config = resolved
 	token := store.NewToken()
 	public, private := publicNodeConfig(in.Config)
 	if private && !a.requireBox(c) {
@@ -380,6 +398,15 @@ func (a *API) updateNode(c *gin.Context) {
 	var oldConfig []byte
 	if err = tx.QueryRow(c.Request.Context(), `SELECT config FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&oldConfig); err != nil {
 		fail(c, 404, "node not found")
+		return
+	}
+	resolved, certOK := a.resolveNodeCertificate(c, tx, id, in.Config, oldConfig)
+	if !certOK {
+		return
+	}
+	in.Config = resolved
+	public, private = publicNodeConfig(in.Config)
+	if private && !a.requireBox(c) {
 		return
 	}
 	var old, next struct {

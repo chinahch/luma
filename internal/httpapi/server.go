@@ -18,16 +18,18 @@ import (
 )
 
 type Config struct {
-	SecureCookies bool
-	AllowedOrigin string
-	Timezone      string
-	MasterKey     string
+	SecureCookies   bool
+	AllowedOrigin   string
+	Timezone        string
+	MasterKey       string
+	AutomaticHealth bool
 }
 type API struct {
-	s     *store.Store
-	cache *redis.Client
-	cfg   Config
-	box   *secretbox.Box
+	s           *store.Store
+	cache       *redis.Client
+	cfg         Config
+	box         *secretbox.Box
+	countryHTTP *http.Client
 }
 type User struct {
 	ID          int64      `json:"id"`
@@ -119,6 +121,8 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	admin.POST("/plans", a.createPlan)
 	admin.PATCH("/plans/:id", a.updatePlan)
 	admin.GET("/machines", a.machines)
+	admin.GET("/machines/layout", a.machineLayout)
+	admin.PUT("/machines/layout", a.saveMachineLayout)
 	admin.POST("/machines", a.createMachine)
 	admin.PATCH("/machines/:id", a.renameMachine)
 	admin.POST("/machines/:id/enrollment", a.createEnrollment)
@@ -126,6 +130,7 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	admin.DELETE("/machines/:id", a.deleteMachine)
 	admin.GET("/nodes", a.nodes)
 	admin.GET("/nodes/:id", a.nodeDetail)
+	admin.GET("/certificates/providers", func(c *gin.Context) { c.JSON(200, protocol.DNSProviders()) })
 	admin.POST("/nodes", a.createNode)
 	admin.PATCH("/nodes/:id", a.updateNode)
 	admin.GET("/exits", a.exits)

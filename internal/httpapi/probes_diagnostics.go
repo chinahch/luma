@@ -30,11 +30,14 @@ type diagnosticResult struct {
 }
 
 var diagnosticMessages = map[string]string{
-	"no_users":         "No eligible users; the native kernel intentionally does not open a listener.",
-	"listener_missing": "The expected local port is not listening.",
-	"listener_present": "The expected local port is bound; this does not verify authentication or external reachability.",
-	"listener_unknown": "Local socket inspection is unavailable on this operating system.",
-	"runtime_stopped":  "The assigned native kernel is stopped.", "runtime_exited": "The assigned node service has exited.", "runtime_unassigned": "The machine has no running service handle for this node.",
+	"certificate_pending": "The node is applying or obtaining its TLS certificate; no valid material is ready yet.",
+	"certificate_failed":  "The node could not apply its TLS certificate. Verify the domain, DNS credentials, certificate files and ACME network access.",
+	"certificate_ready":   "The node has valid TLS certificate material; this does not verify external connectivity.",
+	"no_users":            "No eligible users; the native kernel intentionally does not open a listener.",
+	"listener_missing":    "The expected local port is not listening.",
+	"listener_present":    "The expected local port is bound; this does not verify authentication or external reachability.",
+	"listener_unknown":    "Local socket inspection is unavailable on this operating system.",
+	"runtime_stopped":     "The assigned native kernel is stopped.", "runtime_exited": "The assigned node service has exited.", "runtime_unassigned": "The machine has no running service handle for this node.",
 	"port_in_use":      "Machine logs contain an address-already-in-use error; it may concern another node.",
 	"auth_failure":     "Machine logs contain an authentication failure; it may concern another node.",
 	"config_rejected":  "Machine logs contain a configuration or kernel-start rejection; it may concern another node.",

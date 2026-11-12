@@ -336,6 +336,12 @@ func (a *API) leaseProbes(c *gin.Context) {
 		internal(c, e)
 		return
 	}
+	if a.cfg.AutomaticHealth {
+		if e = a.scheduleMachineHealth(ctx, tx, mid); e != nil {
+			internal(c, e)
+			return
+		}
+	}
 	tasks := []gin.H{}
 	var running bool
 	e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM proxy_probes WHERE machine_id=$1 AND state='running' AND expires_at>now())`, mid).Scan(&running)
@@ -345,7 +351,7 @@ func (a *API) leaseProbes(c *gin.Context) {
 	}
 	if !running {
 		var id string
-		var uid int64
+		var uid *int64
 		var nid *int64
 		var cipher []byte
 		var expires time.Time
@@ -399,6 +405,9 @@ func (a *API) leaseProbes(c *gin.Context) {
 	if e = tx.Commit(ctx); e != nil {
 		internal(c, e)
 		return
+	}
+	if a.cfg.AutomaticHealth {
+		a.refreshMachineCountry(ctx, mid)
 	}
 	c.JSON(http.StatusOK, gin.H{"tasks": tasks})
 }
@@ -475,14 +484,15 @@ func (a *API) probeNodes(c *gin.Context) {
 		Seen  string `json:"seen_at"`
 	}
 	type node struct {
-		ID        int64            `json:"id"`
-		Name      string           `json:"name"`
-		Active    bool             `json:"active"`
-		Last      *time.Time       `json:"last_report_at"`
-		Supported bool             `json:"probe_supported"`
-		Latest    *probeResult     `json:"latest_probe"`
-		Protocol  string           `json:"protocol"`
-		Connector *connectorStatus `json:"connector_status,omitempty"`
+		ID          int64            `json:"id"`
+		Name        string           `json:"name"`
+		Active      bool             `json:"active"`
+		Last        *time.Time       `json:"last_report_at"`
+		MachineLast *time.Time       `json:"machine_last_report_at"`
+		Supported   bool             `json:"probe_supported"`
+		Latest      *probeResult     `json:"latest_probe"`
+		Protocol    string           `json:"protocol"`
+		Connector   *connectorStatus `json:"connector_status,omitempty"`
 	}
 	list := []node{}
 	for rows.Next() {
@@ -523,7 +533,15 @@ func (a *API) probeNodes(c *gin.Context) {
 		if !allowed {
 			continue
 		}
-		p, e := scanProbe(a.s.Pool.QueryRow(ctx, `SELECT `+probeColumns+` FROM proxy_probes WHERE node_id=$1 AND user_id=$2 AND kind='node' ORDER BY created_at DESC LIMIT 1`, n.ID, current(c).ID))
+		if e = a.s.Pool.QueryRow(ctx, `SELECT m.last_report_at FROM nodes n LEFT JOIN machines m ON m.id=n.machine_id WHERE n.id=$1`, n.ID).Scan(&n.MachineLast); e != nil {
+			internal(c, e)
+			return
+		}
+		query := `SELECT ` + probeColumns + ` FROM proxy_probes WHERE node_id=$1 AND user_id=$2 AND kind='node' ORDER BY created_at DESC LIMIT 1`
+		if a.cfg.AutomaticHealth {
+			query = `SELECT ` + probeColumns + ` FROM proxy_probes WHERE node_id=$1 AND machine_id=(SELECT machine_id FROM nodes WHERE id=$1) AND automatic AND kind='node' AND $2::bigint>0 ORDER BY created_at DESC LIMIT 1`
+		}
+		p, e := scanProbe(a.s.Pool.QueryRow(ctx, query, n.ID, current(c).ID))
 		if e != nil && e != pgx.ErrNoRows {
 			internal(c, e)
 			return
