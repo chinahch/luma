@@ -13,3 +13,7 @@ Tasks:
 - [ ] Run real PostgreSQL/full frontend/installer checks; one independent final review, fix regressions, publish changes, follow Linux checks and binary release; provide panel update command.
 
 Review focus: concurrent machine deletion/node association; stale machine credentials; URL/shell injection and loopback origins; repeat installation changing a working service; incomplete architecture/license artifacts advertised as available.
+
+Review regression pass: all six findings are required fixes by user effect, including the originally Minor concurrent lost update, valid-YAML recovery failure, loopback aliases and interrupted publication. Shared/inline credentials, concurrent32 bindings, commented YAML, loopback aliases and interrupted-draft retry each failed before the fix and pass afterward. No deferred Minor findings. A single final reviewer was used; no re-review.
+
+Acceptance limits: actual host service installation/reboot, external connectivity and ARM64 runtime remain operator checks. Checksums establish same-origin integrity, not independent signing. Arbitrary DNS reachability, custom non-root services, power-loss durability, inline-only/domain migration and immediate termination of pre-authenticated sessions are not promised. Credentials are rejected on subsequent authentication; deletion does not stop a running remote process. Inventory includes corresponding sources/notices but is not a separate legal certification. GitHub publication and final installer alignment are verified during delivery.
