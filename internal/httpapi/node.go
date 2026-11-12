@@ -124,14 +124,14 @@ func nodeID(c *gin.Context) (int64, bool) {
 }
 func (a *API) handshake(c *gin.Context) {
 	ident := c.MustGet("node_identity").(nodeIdentity)
-	interval := 60
+	interval := 10
 	if ident.NodeID > 0 {
 		if err := a.s.Pool.QueryRow(c.Request.Context(), `SELECT report_interval FROM nodes WHERE id=$1`, ident.NodeID).Scan(&interval); err != nil {
 			internal(c, err)
 			return
 		}
 	}
-	c.JSON(200, gin.H{"websocket": gin.H{"enabled": false}, "settings": gin.H{"push_interval": interval, "pull_interval": 60}})
+	c.JSON(200, gin.H{"websocket": gin.H{"enabled": false}, "settings": gin.H{"push_interval": interval, "pull_interval": 10}})
 }
 func (a *API) nodeConfig(c *gin.Context) {
 	id, ok := nodeID(c)
@@ -187,7 +187,7 @@ func (a *API) machineNodes(c *gin.Context) {
 		fail(c, 403, "machine credentials required")
 		return
 	}
-	a.jsonQuery(c, `SELECT jsonb_build_object('nodes',COALESCE(jsonb_agg(to_jsonb(t)),'[]'),'base_config',jsonb_build_object('push_interval',60,'pull_interval',60)) FROM (SELECT id,config->>'protocol' AS type,name FROM nodes WHERE machine_id=$1 AND active AND config->>'protocol'<>'mtproxy' ORDER BY id)t`, ident.MachineID)
+	a.jsonQuery(c, `SELECT jsonb_build_object('nodes',COALESCE(jsonb_agg(to_jsonb(t)),'[]'),'base_config',jsonb_build_object('push_interval',10,'pull_interval',10)) FROM (SELECT id,config->>'protocol' AS type,COALESCE(config->>'kernel_type','') AS kernel_type,name FROM nodes WHERE machine_id=$1 AND active AND config->>'protocol'<>'mtproxy' ORDER BY id)t`, ident.MachineID)
 }
 func (a *API) machineStatus(c *gin.Context) {
 	ident := c.MustGet("node_identity").(nodeIdentity)

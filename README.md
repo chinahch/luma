@@ -9,7 +9,8 @@ Vue 3 · TypeScript · Naive UI · Go/Gin · PostgreSQL · Redis · Docker Compo
 ## 已有功能
 
 - 管理员/用户会话登录、角色隔离、用户额度与到期时间、套餐记录。
-- Node / Machine 管理及带归属校验的节点凭据，创建时一次显示，数据库只保存令牌哈希。
+- 服务器一条命令自动接入、在线状态、CPU/内存/磁盘、节点数与心跳；认证自动配置，日常流程不需要复制令牌。
+- 创建或编辑节点时直接选择归属服务器、默认落地和分流，节点与路由一起保存并自动同步。
 - XBoard 节点 v1/v2 REST 适配：握手、配置、用户列表、报告、Machine 节点发现/状态。握手关闭 WebSocket，客户端使用 REST 轮询。
 - 用户 × 节点 × 日期/小时/月用量，UTC 存储、IANA 时区查询、原始与倍率计费用量分离，CSV 精确字节导出。
 - v3 可靠批次接收 API：同一节点/批次事务防重，改变内容的同 ID 返回 409，账本与配额计数原子更新。
@@ -48,7 +49,7 @@ docker compose run --rm -e LUMA_ADMIN_EMAIL -e LUMA_ADMIN_PASSWORD api admin cre
 unset LUMA_ADMIN_EMAIL LUMA_ADMIN_PASSWORD
 ```
 
-登录后先创建套餐/用户与测试节点。机器模式先创建 Machine，再把节点关联到该机器。配置证书、内核与监听地址后再启动节点；面板预览配置不是生产部署许可。详见 [部署与换机](docs/deploy.md)、[接口与计费边界](docs/api-and-accounting.md)。
+登录后先到“服务器管理”添加服务器，复制一条安装命令到节点机以 root 执行。节点使用原生二进制，无需 Docker；安装后即使没有节点也会显示心跳和负载。再创建套餐/用户与节点，选择归属服务器及已有落地，保存后通常在下一次 10 秒同步周期内生效。协议需要的证书与端口仍须在服务器准备。CF Tunnel / MTProxy 使用独立连接器；已安装且使用同一身份的连接器需要协调迁移，安装器会在接入前明确拒绝不安全的轮换。详见 [自动接入](docs/server-enrollment.md)、[部署与换机](docs/deploy.md)、[接口与计费边界](docs/api-and-accounting.md)。
 
 ## HTTPS 与正式访问
 
