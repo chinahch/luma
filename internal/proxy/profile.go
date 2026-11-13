@@ -32,6 +32,7 @@ type TLS struct {
 	Insecure             bool     `json:"insecure,omitempty"`
 	RealityPublicKey     string   `json:"reality_public_key,omitempty"`
 	ShortID              string   `json:"short_id,omitempty"`
+	RealitySpiderX       string   `json:"reality_spider_x,omitempty"`
 	Fingerprint          string   `json:"fingerprint,omitempty"`
 	PinnedPeerCertSHA256 string   `json:"pinned_peer_cert_sha256,omitempty"`
 	VerifyPeerCertByName string   `json:"verify_peer_cert_by_name,omitempty"`

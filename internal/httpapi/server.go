@@ -113,6 +113,7 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	})
 	a.registerAccountRoutes(r, admin)
 	a.registerBusinessRoutes(r, admin)
+	a.registerRenewalRoutes(r, admin)
 	a.registerProbeRoutes(r, admin)
 	admin.GET("/users", a.users)
 	admin.POST("/users", a.createUser)

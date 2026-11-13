@@ -68,6 +68,9 @@ func (p Profile) Link() (string, error) {
 			q.Set("security", "reality")
 			q.Set("pbk", p.TLS.RealityPublicKey)
 			q.Set("sid", p.TLS.ShortID)
+			if p.TLS.RealitySpiderX != "" {
+				q.Set("spx", p.TLS.RealitySpiderX)
+			}
 		}
 		if p.TLS.ServerName != "" {
 			q.Set("sni", p.TLS.ServerName)

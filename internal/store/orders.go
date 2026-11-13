@@ -74,6 +74,13 @@ func (s *Store) AllocateOrderTx(ctx context.Context, tx pgx.Tx, userID, actorID,
 	if err = tx.QueryRow(ctx, `SELECT name,quota_bytes,duration_days,price_cents FROM plans WHERE id=$1 FOR SHARE`, planID).Scan(&o.PlanName, &o.Quota, &o.Days, &o.Price); err != nil {
 		return Order{}, err
 	}
+	return s.applyOrderTx(ctx, tx, o, previous, expiry)
+}
+
+// applyOrderTx consumes an immutable quote while the caller holds the user lock.
+func (s *Store) applyOrderTx(ctx context.Context, tx pgx.Tx, o Order, previous *int64, expiry *time.Time) (Order, error) {
+	userID, actorID, planID, requestID := o.UserID, o.ActorID, o.PlanID, o.RequestID
+	var err error
 	now := time.Now().UTC()
 	if err = s.refreshUserCycle(ctx, tx, userID, now); err != nil {
 		return Order{}, err
