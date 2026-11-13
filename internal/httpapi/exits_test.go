@@ -4,11 +4,61 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/chinahch/luma/internal/proxy"
 	"github.com/chinahch/luma/internal/store"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestEncodedSOCKSAndENCRealityImportPersistWithoutLosingOptions(t *testing.T) {
+	_, s := setup(t)
+	h := New(s, nil, Config{MasterKey: strings.Repeat("01", 32)})
+	admin := login(t, h, "admin@example.test")
+	links := "socks://YWxpY2U6cGFzcw@exit.example:52000#SOCKS\n" +
+		"vless://00000000-0000-4000-8000-000000000001@exit.example:20200?encryption=mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&flow=xtls-rprx-vision&security=reality&sni=addons.mozilla.org&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=7d460428&spx=%2F&type=tcp&headerType=none#VLESS"
+	w := request(h, "POST", "/api/admin/exits/parse", map[string]any{"links": links}, admin)
+	var preview struct {
+		Profiles []proxy.Profile   `json:"profiles"`
+		Issues   []json.RawMessage `json:"issues"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &preview) != nil || len(preview.Profiles) != 2 || len(preview.Issues) != 0 {
+		t.Fatal("import preview failed", w.Code, w.Body.String())
+	}
+	if preview.Profiles[0].Username != "alice" || preview.Profiles[0].Password != "pass" {
+		t.Fatal("encoded SOCKS credentials lost")
+	}
+	w = request(h, "POST", "/api/admin/exits", map[string]any{"profiles": preview.Profiles}, admin)
+	var saved struct {
+		IDs []int64 `json:"ids"`
+	}
+	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &saved) != nil || len(saved.IDs) != 2 {
+		t.Fatal("save failed", w.Code, w.Body.String())
+	}
+	for i, id := range saved.IDs {
+		w = request(h, "GET", fmt.Sprintf("/api/admin/exits/%d", id), nil, admin)
+		var p proxy.Profile
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &p) != nil {
+			t.Fatal("saved profile could not be read")
+		}
+		before, _ := json.Marshal(preview.Profiles[i])
+		after, _ := json.Marshal(p)
+		if string(before) != string(after) {
+			t.Fatal("profile changed during encrypted persistence")
+		}
+		o, err := p.Outbound("xray", "landing")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(o)
+		if i == 0 && !strings.Contains(string(b), `"users":[{"pass":"pass","user":"alice"}]`) {
+			t.Fatal("SOCKS authentication lost")
+		}
+		if i == 1 && (!strings.Contains(string(b), `"spiderX":"/"`) || !strings.Contains(string(b), `"flow":"xtls-rprx-vision"`) || !strings.Contains(string(b), "mlkem768x25519plus.native.0rtt.")) {
+			t.Fatal("ENC/REALITY outbound options lost")
+		}
+	}
+}
 
 func TestExitImportEncryptedMaskedAndRoleIsolated(t *testing.T) {
 	_, s := setup(t)

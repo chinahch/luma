@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 func invalid(reason string) error { return errors.New("invalid proxy link: " + reason) }
@@ -59,6 +60,20 @@ func Parse(raw string) (Profile, error) {
 			raw = u.String()
 		}
 	}
+	// Standard Base64 can contain a raw slash. Normalize credentials before
+	// URI parsing so it cannot mistake that slash for the authority's end.
+	if scheme, authority, ok := strings.Cut(raw, "://"); ok && (strings.EqualFold(scheme, "socks") || strings.EqualFold(scheme, "socks5")) {
+		if at := strings.IndexByte(authority, '@'); at > 0 && !strings.ContainsAny(authority[:at], ":%") {
+			if decoded, err := unbase64(authority[:at]); err == nil {
+				if user, pass, ok := strings.Cut(string(decoded), ":"); ok {
+					if !utf8.Valid(decoded) {
+						return p, invalid("SOCKS credentials encoding")
+					}
+					raw = scheme + "://" + url.UserPassword(user, pass).String() + authority[at:]
+				}
+			}
+		}
+	}
 	u, e := url.Parse(raw)
 	if e != nil {
 		return p, invalid("URI syntax")
@@ -86,13 +101,26 @@ func Parse(raw string) (Profile, error) {
 		}
 	}
 	username, password := "", ""
+	hasPassword := false
 	if u.User != nil {
 		username = u.User.Username()
-		password, _ = u.User.Password()
+		password, hasPassword = u.User.Password()
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "socks", "socks5":
 		p.Protocol = "socks"
+		// Some clients encode the complete user:password pair in userinfo.
+		// An explicit colon always denotes literal URI credentials, even if empty.
+		if !hasPassword {
+			if decoded, err := unbase64(username); err == nil {
+				if user, pass, ok := strings.Cut(string(decoded), ":"); ok {
+					if !utf8.Valid(decoded) {
+						return p, invalid("SOCKS credentials encoding")
+					}
+					username, password = user, pass
+				}
+			}
+		}
 		p.Username = username
 		p.Password = password
 	case "http", "https":
@@ -146,7 +174,7 @@ func Parse(raw string) (Profile, error) {
 		return p, invalid("REALITY key without REALITY security")
 	}
 	known := map[string]bool{}
-	for _, k := range strings.Fields("type security sni peer alpn allowInsecure insecure pbk sid fp path host serviceName mode encryption flow obfs obfs-password pcs vcn") {
+	for _, k := range strings.Fields("type security sni peer alpn allowInsecure insecure pbk sid fp spx headerType path host serviceName mode encryption flow obfs obfs-password pcs vcn") {
 		known[k] = true
 	}
 	for k := range q {
@@ -165,6 +193,9 @@ func Parse(raw string) (Profile, error) {
 	case "tcp", "ws", "grpc", "xhttp":
 	default:
 		return p, invalid("unsupported transport")
+	}
+	if header := q.Get("headerType"); header != "" && (header != "none" || p.Protocol != "vless" || p.Transport.Network != "tcp") {
+		return p, invalid("unsupported header type")
 	}
 	p.Transport.Path = q.Get("path")
 	p.Transport.Host = q.Get("host")
@@ -188,6 +219,7 @@ func Parse(raw string) (Profile, error) {
 		p.TLS.ServerName = q.Get("peer")
 	}
 	p.TLS.ShortID = q.Get("sid")
+	p.TLS.RealitySpiderX = q.Get("spx")
 	p.TLS.Fingerprint = q.Get("fp")
 	p.TLS.PinnedPeerCertSHA256 = q.Get("pcs")
 	p.TLS.VerifyPeerCertByName = q.Get("vcn")
@@ -250,6 +282,14 @@ func (p Profile) Validate() error {
 		short, e := hex.DecodeString(p.TLS.ShortID)
 		if e != nil || len(short) > 8 {
 			return invalid("REALITY short ID")
+		}
+	}
+	if path := p.TLS.RealitySpiderX; path != "" {
+		if p.TLS.RealityPublicKey == "" || !strings.HasPrefix(path, "/") || len(path) > 4096 || strings.ContainsAny(path, "\r\n\x00") {
+			return invalid("REALITY spider path")
+		}
+		if _, err := url.Parse(path); err != nil {
+			return invalid("REALITY spider path")
 		}
 	}
 	if p.TLS.VerifyPeerCertByName != "" && (!p.TLS.Enabled || p.TLS.RealityPublicKey != "" || len(p.TLS.VerifyPeerCertByName) > 1024) {

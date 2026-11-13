@@ -35,6 +35,9 @@ var migration6 string
 //go:embed migration7.sql
 var migration7 string
 
+//go:embed migration8.sql
+var migration8 string
+
 var ErrConflict = errors.New("report identity conflicts with existing payload")
 var ErrForbidden = errors.New("node is not active or authorized")
 var ErrInvalid = errors.New("invalid accounting entry")
@@ -81,7 +84,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err = tx.QueryRow(ctx, `SELECT version FROM schema_version WHERE id=1`).Scan(&version); err != nil {
 			return err
 		}
-		if version < 1 || version > 7 {
+		if version < 1 || version > 8 {
 			return fmt.Errorf("unsupported database version %d", version)
 		}
 	} else {
@@ -116,6 +119,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if version <= 6 {
 		if _, err = tx.Exec(ctx, migration7); err != nil {
+			return err
+		}
+	}
+	if version <= 7 {
+		if _, err = tx.Exec(ctx, migration8); err != nil {
 			return err
 		}
 	}

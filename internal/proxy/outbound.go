@@ -20,6 +20,9 @@ func (p Profile) Outbound(kernel, tag string) (M, error) {
 	s := M{}
 	o["settings"] = s
 	if kernel == "singbox" {
+		if p.TLS.RealitySpiderX != "" {
+			return nil, errors.New("REALITY spider path requires Xray")
+		}
 		if p.TLS.PinnedPeerCertSHA256 != "" || p.TLS.VerifyPeerCertByName != "" {
 			return nil, errors.New("Xray certificate pin parameters require Xray")
 		}
@@ -151,6 +154,9 @@ func (p Profile) Outbound(kernel, tag string) (M, error) {
 				fp = "chrome"
 			}
 			stream["realitySettings"] = M{"serverName": p.TLS.ServerName, "publicKey": p.TLS.RealityPublicKey, "shortId": p.TLS.ShortID, "fingerprint": fp}
+			if p.TLS.RealitySpiderX != "" {
+				stream["realitySettings"].(M)["spiderX"] = p.TLS.RealitySpiderX
+			}
 		}
 	}
 	switch p.Transport.Network {

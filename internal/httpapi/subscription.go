@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chinahch/luma/internal/protocol"
+	"github.com/chinahch/luma/internal/proxy"
 	"github.com/chinahch/luma/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -28,9 +29,29 @@ func (a *API) subscription(c *gin.Context) {
 	var uuid string
 	var used, quota, userID int64
 	var expiry *time.Time
-	err := a.s.Pool.QueryRow(c.Request.Context(), `SELECT uuid,used_bytes,quota_bytes,expires_at,id FROM users WHERE subscription_hash=$1 AND active AND deleted_at IS NULL AND used_bytes<quota_bytes AND (expires_at IS NULL OR expires_at>now())`, store.Hash(token)).Scan(&uuid, &used, &quota, &expiry, &userID)
+	err := a.s.Pool.QueryRow(c.Request.Context(), `SELECT uuid,used_bytes,quota_bytes,expires_at,id FROM users WHERE subscription_hash=$1 AND active AND deleted_at IS NULL`, store.Hash(token)).Scan(&uuid, &used, &quota, &expiry, &userID)
 	if err != nil {
 		fail(c, 404, "subscription unavailable or quota expired")
+		return
+	}
+	info := "upload=0; download=" + strconv.FormatInt(used, 10) + "; total=" + strconv.FormatInt(quota, 10)
+	if expiry != nil {
+		info += "; expire=" + strconv.FormatInt(expiry.Unix(), 10)
+	}
+	c.Header("Subscription-Userinfo", info)
+	expired := expiry != nil && !expiry.After(time.Now())
+	if expired || used >= quota {
+		name := "流量已用尽，请续费"
+		if expired {
+			name = "订阅已过期，需要续费"
+		}
+		p := proxy.Profile{Name: name, Protocol: "shadowsocks", Server: "127.0.0.1", Port: 65535, Method: "aes-128-gcm", Password: "subscription-unavailable", Transport: proxy.Transport{Network: "tcp"}}
+		link, e := p.Link()
+		if e != nil {
+			internal(c, e)
+			return
+		}
+		writeSubscription(c, []string{link})
 		return
 	}
 	rows, err := a.s.Pool.Query(c.Request.Context(), `SELECT n.id,n.name,n.public_host,n.config,p.encrypted_config FROM nodes n LEFT JOIN node_private p ON p.node_id=n.id WHERE n.active AND n.public_host<>'' AND (NOT EXISTS(SELECT 1 FROM node_plans np WHERE np.node_id=n.id) OR EXISTS(SELECT 1 FROM node_plans np JOIN users u ON u.id=$1 WHERE np.node_id=n.id AND np.plan_id=u.plan_id)) ORDER BY n.id`, userID)
@@ -66,6 +87,26 @@ func (a *API) subscription(c *gin.Context) {
 			skipped++
 			continue
 		}
+		if len(links) == 0 {
+			expiryName := "有效期：长期有效"
+			if expiry != nil {
+				zone, e := time.LoadLocation(a.cfg.Timezone)
+				if e != nil {
+					zone = time.UTC
+				}
+				expiryName = "有效期：" + expiry.In(zone).Format("2006-01-02 15:04")
+			}
+			for _, name := range []string{"剩余流量：" + strconv.FormatFloat(float64(quota-used)/1e9, 'f', 2, 64) + " GB", expiryName} {
+				copy := profile
+				copy.Name = name
+				metadata, e := copy.Link()
+				if e != nil {
+					internal(c, e)
+					return
+				}
+				links = append(links, metadata)
+			}
+		}
 		links = append(links, link)
 	}
 	if rows.Err() != nil {
@@ -76,14 +117,13 @@ func (a *API) subscription(c *gin.Context) {
 		fail(c, 503, "no supported subscription nodes configured")
 		return
 	}
-	info := "upload=0; download=" + strconv.FormatInt(used, 10) + "; total=" + strconv.FormatInt(quota, 10)
-	if expiry != nil {
-		info += "; expire=" + strconv.FormatInt(expiry.Unix(), 10)
-	}
-	c.Header("Subscription-Userinfo", info)
 	if skipped > 0 {
 		c.Header("X-Luma-Skipped-Nodes", strconv.Itoa(skipped))
 	}
+	writeSubscription(c, links)
+}
+func writeSubscription(c *gin.Context, links []string) {
+	c.Header("Cache-Control", "no-store")
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.Header("Content-Disposition", `attachment; filename="luma.txt"`)
 	c.String(200, base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n"))))

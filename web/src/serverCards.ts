@@ -1,5 +1,14 @@
 import type {Probe} from './featureState'
 import {probeLabel} from './featureState.ts'
+import {connectionState} from './serverState.ts'
+export function nodeAvailability(node:any,now=Date.now()):{text:string;tone:'success'|'error'|'warning'|'default';group:'online'|'abnormal'|'pending'}{
+ const host=connectionState(node.machine_last_report_at,now)
+ if(host!=='online')return {text:host==='pending'?'未连接':'离线',tone:'warning',group:'abnormal'}
+ const view=automaticHealthView(node.latest_probe,now)
+ if(view.tone==='success')return {text:'在线',tone:'success',group:'online'}
+ if(view.tone==='error')return {text:'异常',tone:'error',group:'abnormal'}
+ return {...view,group:'pending'}
+}
 export function serverCards(machines:any[],nodes:any[],order:number[]){
  const cards=machines.map(machine=>{const owned=nodes.filter(n=>n.machine_id===machine.id);return {...machine,nodes:owned,enabled:owned.filter(n=>n.active).length}})
  const position=new Map(order.map((id,index)=>[id,index]));cards.sort((a,b)=>(position.get(a.id)??100000+a.id)-(position.get(b.id)??100000+b.id))
