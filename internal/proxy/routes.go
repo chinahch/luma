@@ -57,7 +57,9 @@ func (r Routes) Compile() ([]M, error) {
 	}
 	// An explicit first rule is necessary: upstream structured rules precede
 	// its implicit private-network blocks. A catch-all must never bypass them.
-	rules = append(rules, M{"name": "Luma private-network guard", "match": M{"ip_cidrs": []string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "192.0.0.0/24", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4", "::/128", "::1/128", "::ffff:0:0/96", "fc00::/7", "fe80::/10", "ff00::/8"}}, "action": M{"type": "block"}})
+	// Do not include the mapped IPv4 /96: Xray normalizes it to IPv4 and
+	// rejects the 96-bit mask. The IPv4 ranges cover mapped private addresses.
+	rules = append(rules, M{"name": "Luma private-network guard", "match": M{"ip_cidrs": []string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "192.0.0.0/24", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4", "::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"}}, "action": M{"type": "block"}})
 	for _, v := range r.Rules {
 		if v.ExitID <= 0 || len(v.DomainSuffixes)+len(v.IPCIDRs) == 0 || len(v.DomainSuffixes)+len(v.IPCIDRs) > 100 {
 			return nil, invalid("route requires an exit and domain suffix or CIDR")
