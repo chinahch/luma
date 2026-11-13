@@ -2,9 +2,55 @@ package proxy
 
 import (
 	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 )
+
+func TestLandingGuardUsesKernelCompatibleCIDRs(t *testing.T) {
+	on, off := true, false
+	for _, r := range []Routes{
+		{DefaultExit: 7},
+		{Global: &on, DefaultExit: 7},
+		{Global: &off, Rules: []Route{{ExitID: 7, DomainSuffixes: []string{"example.com"}}}},
+	} {
+		rules, err := r.Compile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var networks []*net.IPNet
+		for _, cidr := range rules[0]["match"].(M)["ip_cidrs"].([]string) {
+			ip, network, err := net.ParseCIDR(cidr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Xray normalizes mapped IPv6 to IPv4 before checking the mask.
+			// A mapped /96 is valid CIDR syntax but is rejected by its router.
+			bits, _ := network.Mask.Size()
+			if ip.To4() != nil && bits > 32 {
+				t.Fatalf("Xray rejects mapped IPv4 CIDR %s after normalization", cidr)
+			}
+			networks = append(networks, network)
+		}
+		for _, tc := range []struct {
+			address string
+			blocked bool
+		}{
+			{"10.1.2.3", true}, {"127.0.0.1", true}, {"192.168.1.1", true},
+			{"::ffff:10.1.2.3", true}, {"::ffff:127.0.0.1", true}, {"::ffff:192.168.1.1", true},
+			{"::1", true}, {"fc00::1", true}, {"fe80::1", true},
+			{"1.1.1.1", false}, {"::ffff:1.1.1.1", false}, {"2606:4700:4700::1111", false},
+		} {
+			blocked := false
+			for _, network := range networks {
+				blocked = blocked || network.Contains(net.ParseIP(tc.address))
+			}
+			if blocked != tc.blocked {
+				t.Fatalf("guard for %s: blocked=%t, want %t", tc.address, blocked, tc.blocked)
+			}
+		}
+	}
+}
 
 func TestExplicitGlobalExitToggleControlsEffectiveRoutes(t *testing.T) {
 	for _, tc := range []struct {
