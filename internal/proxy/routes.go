@@ -7,6 +7,7 @@ import (
 )
 
 type Routes struct {
+	Global      *bool   `json:"global,omitempty"`
 	DefaultExit int64   `json:"default_exit"`
 	Rules       []Route `json:"rules"`
 }
@@ -17,6 +18,13 @@ type Route struct {
 }
 
 func ExitTag(id int64) string { return fmt.Sprintf("luma-exit-%d", id) }
+
+// ConfiguredExitIDs also includes selections retained while a mode is off.
+func (r Routes) ConfiguredExitIDs() []int64 {
+	copy := r
+	copy.Global = nil
+	return copy.ExitIDs()
+}
 func (r Routes) ExitIDs() []int64 {
 	ids := []int64{}
 	seen := map[int64]bool{}
@@ -26,15 +34,22 @@ func (r Routes) ExitIDs() []int64 {
 			seen[id] = true
 		}
 	}
-	for _, v := range r.Rules {
-		add(v.ExitID)
+	if r.Global == nil || !*r.Global {
+		for _, v := range r.Rules {
+			add(v.ExitID)
+		}
 	}
-	add(r.DefaultExit)
+	if r.Global == nil || *r.Global {
+		add(r.DefaultExit)
+	}
 	return ids
 }
 func (r Routes) Compile() ([]M, error) {
 	if r.DefaultExit < 0 || len(r.Rules) > 100 {
 		return nil, invalid("invalid exit or too many routes")
+	}
+	if r.Global != nil && *r.Global && r.DefaultExit == 0 {
+		return nil, invalid("global mode requires a landing exit")
 	}
 	rules := []M{}
 	if len(r.ExitIDs()) == 0 && len(r.Rules) == 0 {
@@ -57,6 +72,9 @@ func (r Routes) Compile() ([]M, error) {
 				return nil, invalid("CIDR")
 			}
 		}
+		if r.Global != nil && *r.Global {
+			continue
+		}
 		// Split domain and IP lists into separate rules so their meaning is OR
 		// on both kernels rather than an impossible domain AND IP match.
 		for _, match := range []M{{"domain_suffixes": v.DomainSuffixes}, {"ip_cidrs": v.IPCIDRs}} {
@@ -69,7 +87,7 @@ func (r Routes) Compile() ([]M, error) {
 			}
 		}
 	}
-	if r.DefaultExit > 0 {
+	if r.DefaultExit > 0 && (r.Global == nil || *r.Global) {
 		rules = append(rules, M{"name": "Luma default exit", "match": M{"networks": []string{"tcp", "udp"}}, "action": M{"type": "route", "target": ExitTag(r.DefaultExit)}})
 	}
 	return rules, nil

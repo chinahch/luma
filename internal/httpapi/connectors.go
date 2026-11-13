@@ -168,7 +168,7 @@ func (a *API) connectors(c *gin.Context) {
 					fail(c, 409, "MTG supports only a default SOCKS5 exit")
 					return
 				}
-				if r.DefaultExit > 0 {
+				if r.DefaultExit > 0 && (r.Global == nil || *r.Global) {
 					p, ok := a.loadExit(c, r.DefaultExit)
 					if !ok {
 						return

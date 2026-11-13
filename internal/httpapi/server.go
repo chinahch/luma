@@ -139,6 +139,7 @@ func New(s *store.Store, cache *redis.Client, cfg Config) *gin.Engine {
 	admin.POST("/exits", a.createExits)
 	admin.GET("/exits/:id", a.exitDetail)
 	admin.PATCH("/exits/:id", a.updateExit)
+	admin.DELETE("/exits/:id", a.deleteExit)
 	admin.GET("/nodes/:id/exits", a.nodeExits)
 	admin.PUT("/nodes/:id/exits", a.saveNodeExits)
 	admin.GET("/protocols", func(c *gin.Context) { c.JSON(200, protocol.Catalog()) })

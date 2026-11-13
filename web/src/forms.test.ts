@@ -16,3 +16,10 @@ test('node routing serializes ordered domain and CIDR rules with the established
  assert.throws(()=>f.nodeRouting(0,[{exit_id:2,domains:'',cidrs:''}]))
 })
 import * as forms from './forms.ts'
+
+test('explicit global mode persists both on and off and requires a global landing',()=>{
+ const f=forms as any
+ assert.deepEqual(f.nodeRouting(7,[],false),{global:false,default_exit:7,rules:[]})
+ assert.deepEqual(f.nodeRouting(7,[],true),{global:true,default_exit:7,rules:[]})
+ assert.throws(()=>f.nodeRouting(0,[],true))
+})

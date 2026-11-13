@@ -2,11 +2,75 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/chinahch/luma/internal/proxy"
 	"github.com/chinahch/luma/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"strings"
 )
+
+func (a *API) deleteExit(c *gin.Context) {
+	id, ok := positiveID(c)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	tx, err := a.s.Pool.Begin(ctx)
+	if err != nil {
+		internal(c, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	var locked int64
+	if err = tx.QueryRow(ctx, `SELECT id FROM exits WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err == pgx.ErrNoRows {
+		fail(c, 404, "exit not found")
+		return
+	} else if err != nil {
+		internal(c, err)
+		return
+	}
+	rows, err := tx.Query(ctx, `SELECT n.id,n.name FROM node_exit_routes r JOIN nodes n ON n.id=r.node_id WHERE n.deleted_at IS NULL AND (r.config @> jsonb_build_object('default_exit',$1::bigint) OR r.config @> jsonb_build_object('rules',jsonb_build_array(jsonb_build_object('exit_id',$1::bigint)))) ORDER BY n.id LIMIT 6`, id)
+	if err != nil {
+		internal(c, err)
+		return
+	}
+	names := []string{}
+	for rows.Next() {
+		var nid int64
+		var name string
+		if err = rows.Scan(&nid, &name); err != nil {
+			rows.Close()
+			internal(c, err)
+			return
+		}
+		names = append(names, fmt.Sprintf("%s（#%d）", name, nid))
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		internal(c, err)
+		return
+	}
+	if len(names) > 0 {
+		suffix := ""
+		if len(names) > 5 {
+			names = names[:5]
+			suffix = "等节点"
+		}
+		fail(c, 409, "该落地仍被 "+strings.Join(names, "、")+suffix+" 引用，请先在节点的落地与分流中替换或移除。")
+		return
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM exits WHERE id=$1`, id); err != nil {
+		dbFailure(c, err)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		internal(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"ok": true})
+}
 
 func (a *API) exits(c *gin.Context) {
 	a.jsonQuery(c, `SELECT COALESCE(jsonb_agg(to_jsonb(t)),'[]') FROM (SELECT id,name,protocol,server,port,active,created_at,updated_at FROM exits ORDER BY id DESC)t`)
