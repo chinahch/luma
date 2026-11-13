@@ -24,3 +24,10 @@ sh scripts/backup.sh && git pull --ff-only && docker compose up -d --build --wai
 数据库自动从版本 7 升至 8，旧订单保持原样，新增独立的续期申请表。旧版本应用不支持版本 8，回退需恢复升级前的数据库备份及对应源码，不直接在新数据库上运行旧程序。刷新浏览器加载前端。
 
 接口：用户 `GET /api/me/renewal-plan`、`GET/POST /api/me/renewals`、`POST /api/me/renewals/:id/cancel`；管理员 `GET /api/admin/renewals`、`GET /api/admin/users/:id/renewals`、`POST /api/admin/renewals/:id/approve` 与 `.../reject`。
+
+
+## 用户界面
+
+登录页使用居中卡片，用户中心使用顶部导航、蓝色主按钮和浅色内容卡片，支持深色模式及手机布局。管理员默认进入管理后台，可点击顶栏「用户中心」切换；在用户中心的账户菜单可返回后台。仪表盘展示真实账号额度、有效期、当前套餐和流量重置时间。顶部的套餐续期、订阅、邀请及更多菜单均连接现有功能，没有模拟商店、付款或无效文档入口。
+
+管理员续期订单使用服务端分页（每页20条，返回total与rows），待确认优先；用户自己的申请记录最多显示最近2000条。客户端在刷新/取消后核对已提交的请求编号，避免网络响应丢失后复用已取消的申请。
