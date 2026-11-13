@@ -41,8 +41,15 @@ func (a *API) saveNodeExits(c *gin.Context) {
 		fail(c, 400, e.Error())
 		return
 	}
+	ctx := c.Request.Context()
+	tx, e := a.s.Pool.Begin(ctx)
+	if e != nil {
+		internal(c, e)
+		return
+	}
+	defer tx.Rollback(ctx)
 	var raw []byte
-	e := a.s.Pool.QueryRow(c.Request.Context(), `SELECT config FROM nodes WHERE id=$1`, id).Scan(&raw)
+	e = tx.QueryRow(ctx, `SELECT config FROM nodes WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&raw)
 	if e == pgx.ErrNoRows {
 		fail(c, 404, "node not found")
 		return
@@ -53,11 +60,14 @@ func (a *API) saveNodeExits(c *gin.Context) {
 	}
 	var cfg map[string]any
 	json.Unmarshal(raw, &cfg)
+	if !a.lockConfiguredExits(c, tx, r) {
+		return
+	}
 	if len(r.ExitIDs()) > 0 {
 		if !a.requireBox(c) {
 			return
 		}
-		if _, e = a.compileNodeExits(c, r, cfg); e != nil {
+		if _, e = a.compileNodeExitsWith(ctx, tx, r, cfg); e != nil {
 			if !c.IsAborted() {
 				fail(c, 400, e.Error())
 			}
@@ -65,8 +75,12 @@ func (a *API) saveNodeExits(c *gin.Context) {
 		}
 	}
 	raw, _ = json.Marshal(r)
-	if _, e = a.s.Pool.Exec(c.Request.Context(), `INSERT INTO node_exit_routes(node_id,config) VALUES($1,$2) ON CONFLICT(node_id) DO UPDATE SET config=excluded.config,updated_at=now()`, id, raw); e != nil {
+	if _, e = tx.Exec(ctx, `INSERT INTO node_exit_routes(node_id,config) VALUES($1,$2) ON CONFLICT(node_id) DO UPDATE SET config=excluded.config,updated_at=now()`, id, raw); e != nil {
 		dbFailure(c, e)
+		return
+	}
+	if e = tx.Commit(ctx); e != nil {
+		internal(c, e)
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "notice": "requires landing-v1 node; applied on next successful config refresh"})
@@ -131,6 +145,9 @@ func (a *API) saveNodeRouting(c *gin.Context, tx pgx.Tx, id int64, r *proxy.Rout
 		fail(c, 400, err.Error())
 		return false
 	}
+	if !a.lockConfiguredExits(c, tx, *r) {
+		return false
+	}
 	if len(r.ExitIDs()) > 0 {
 		if !a.requireBox(c) {
 			return false
@@ -149,6 +166,22 @@ func (a *API) saveNodeRouting(c *gin.Context, tx pgx.Tx, id int64, r *proxy.Rout
 	if _, err := tx.Exec(c.Request.Context(), `INSERT INTO node_exit_routes(node_id,config) VALUES($1,$2) ON CONFLICT(node_id) DO UPDATE SET config=excluded.config,updated_at=now()`, id, raw); err != nil {
 		dbFailure(c, err)
 		return false
+	}
+	return true
+}
+
+func (a *API) lockConfiguredExits(c *gin.Context, tx pgx.Tx, r proxy.Routes) bool {
+	for _, id := range r.ConfiguredExitIDs() {
+		var locked int64
+		err := tx.QueryRow(c.Request.Context(), `SELECT id FROM exits WHERE id=$1 FOR SHARE`, id).Scan(&locked)
+		if err == pgx.ErrNoRows {
+			fail(c, 400, fmt.Sprintf("落地 #%d 已不存在，请重新选择。", id))
+			return false
+		}
+		if err != nil {
+			internal(c, err)
+			return false
+		}
 	}
 	return true
 }
@@ -208,6 +241,19 @@ func (a *API) applyNodeExits(c *gin.Context, id int64, cfg map[string]any) bool 
 		existing = append(existing, o)
 	}
 	cfg["custom_outbounds"] = existing
+	if r.Global != nil {
+		merged := []any{}
+		for _, rule := range rules {
+			merged = append(merged, rule)
+		}
+		if !*r.Global {
+			if old, ok := cfg["custom_route_rules"].([]any); ok {
+				merged = append(merged, old...)
+			}
+		}
+		cfg["custom_route_rules"] = merged
+		return true
+	}
 	// Keep existing custom rules after the private guard but ahead of the
 	// generated default rule, which would otherwise shadow their matches.
 	old, _ := cfg["custom_route_rules"].([]any)

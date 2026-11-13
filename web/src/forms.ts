@@ -3,10 +3,11 @@ export function initialExpiry(existing:string|null|undefined,editing:boolean,now
 }
 
 export interface RouteDraft {exit_id:number|null,domains:string,cidrs:string}
-export function nodeRouting(defaultExit:number,rules:RouteDraft[]){
+export function nodeRouting(defaultExit:number,rules:RouteDraft[],global?:boolean){
  if(!Number.isSafeInteger(defaultExit)||defaultExit<0)throw new Error('请选择默认出站。')
+	if(global&&defaultExit===0)throw new Error('请选择全局使用的落地。')
  const lines=(s:string)=>s.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)
- return {default_exit:defaultExit,rules:rules.map((r,i)=>{
+ return {...(global===undefined?{}:{global}),default_exit:defaultExit,rules:rules.map((r,i)=>{
   if(!Number.isSafeInteger(r.exit_id)||!r.exit_id||r.exit_id<0)throw new Error(`请为分流 ${i+1} 选择落地。`)
   const domain_suffixes=lines(r.domains),ip_cidrs=lines(r.cidrs)
   if(!domain_suffixes.length&&!ip_cidrs.length)throw new Error(`分流 ${i+1} 至少需要一个域名或 IP 网段。`)
